@@ -2,6 +2,10 @@ import { useFonts } from "expo-font";
 import { SplashScreen, Stack } from "expo-router";
 import { useEffect } from "react";
 import './globals.css';
+import { initSentry } from "@/lib/sentry";
+
+// Initialize Sentry before app renders
+initSentry();
 
 export default function RootLayout() {
   const [fontsLoaded, error] = useFonts({

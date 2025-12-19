@@ -29,7 +29,6 @@ export default function TransactionsSection({
           ItemSeparatorComponent={() => <View className="h-3" />}
           renderItem={({ item }) => {
             const category = categories.find((c) => c.id === item.categoryId);
-            console.log("Transaction categoryId:", item.categoryId, "| Found category:", category?.name, "| Available categories:", categories.map(c => c.id));
             return (
               <TransactionRow
                 transaction={item}

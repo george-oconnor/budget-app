@@ -1,6 +1,7 @@
 import { getCategories, getMonthlyBudget, getTransactionsForMonth } from "@/lib/appwrite";
 import type { Category, Summary, Transaction } from "@/types/type";
 import { create } from "zustand";
+import { captureException } from "@/lib/sentry";
 
 type HomeState = {
   summary: Summary | null;
@@ -125,10 +126,17 @@ export const useHomeStore = create<HomeState>((set) => ({
         icon: c.icon,
       }));
 
-      set({ summary, transactions, categories: categories.length ? categories : mockCategories, loading: false });
+      // Add "All" category at the beginning
+      const allCategories: Category[] = [
+        { id: "all", name: "All", color: "#2F9B65" },
+        ...(categories.length ? categories : mockCategories.slice(1)), // Exclude mock "All" if using real categories
+      ];
+
+      set({ summary, transactions, categories: allCategories, loading: false });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to load home data";
       console.warn("❌ Fetch home data failed:", errorMsg, err);
+      captureException(err instanceof Error ? err : new Error(errorMsg), { userId: "demo-user" });
       set({ error: errorMsg, loading: false });
     }
   },

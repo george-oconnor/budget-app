@@ -9,7 +9,7 @@ export function formatCurrency(
       currency,
       maximumFractionDigits: 2,
     }).format(value);
-  } catch (e) {
+  } catch {
     return `${currency} ${value.toFixed(2)}`;
   }
 }
