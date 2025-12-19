@@ -1,28 +1,6 @@
+import { getCategories, getMonthlyBudget, getTransactionsForMonth } from "@/lib/appwrite";
+import type { Category, Summary, Transaction } from "@/types/type";
 import { create } from "zustand";
-
-export type Category = {
-  id: string;
-  name: string;
-  color?: string;
-  icon?: string;
-};
-
-export type Transaction = {
-  id: string;
-  title: string;
-  subtitle: string;
-  amount: number;
-  categoryId: string;
-  kind: "income" | "expense";
-  date: string;
-};
-
-export type Summary = {
-  balance: number;
-  income: number;
-  expenses: number;
-  currency: string;
-};
 
 type HomeState = {
   summary: Summary | null;
@@ -48,7 +26,7 @@ const mockTransactions: Transaction[] = [
     id: "t-1",
     title: "Groceries",
     subtitle: "Trader Joe's",
-    amount: -64.32,
+    amount: -6432,
     categoryId: "food",
     kind: "expense",
     date: "2024-12-19T15:30:00.000Z",
@@ -57,7 +35,7 @@ const mockTransactions: Transaction[] = [
     id: "t-2",
     title: "Paycheck",
     subtitle: "Monthly salary",
-    amount: 3200,
+    amount: 320000,
     categoryId: "income",
     kind: "income",
     date: "2024-12-18T09:00:00.000Z",
@@ -66,7 +44,7 @@ const mockTransactions: Transaction[] = [
     id: "t-3",
     title: "Metro pass",
     subtitle: "Transit",
-    amount: -45.0,
+    amount: -4500,
     categoryId: "transport",
     kind: "expense",
     date: "2024-12-17T08:10:00.000Z",
@@ -75,7 +53,7 @@ const mockTransactions: Transaction[] = [
     id: "t-4",
     title: "Electric bill",
     subtitle: "Utilities",
-    amount: -120.5,
+    amount: -12050,
     categoryId: "bills",
     kind: "expense",
     date: "2024-12-16T12:00:00.000Z",
@@ -83,10 +61,11 @@ const mockTransactions: Transaction[] = [
 ];
 
 const mockSummary: Summary = {
-  balance: 12450.23,
-  income: 5200,
-  expenses: 2650,
+  balance: 1245023,
+  income: 520000,
+  expenses: 265000,
   currency: "USD",
+  monthlyBudget: 300000,
 };
 
 export const useHomeStore = create<HomeState>((set) => ({
@@ -99,11 +78,58 @@ export const useHomeStore = create<HomeState>((set) => ({
   fetchHome: async () => {
     set({ loading: true, error: null });
     try {
-      // TODO: Replace mock data with Appwrite fetch when backend is wired.
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      set({ summary: mockSummary, transactions: mockTransactions, loading: false });
+      const now = new Date();
+      const userId = "demo-user"; // TODO: read from useSessionStore when auth is ready
+
+      const envOk = Boolean(process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT && process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID);
+      if (!envOk) {
+        // Fallback to mock if env not configured
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        set({ summary: mockSummary, transactions: mockTransactions, loading: false });
+        return;
+      }
+
+      const [budgetDoc, txDocs, catDocs] = await Promise.all([
+        getMonthlyBudget(userId),
+        getTransactionsForMonth(userId, now.getUTCFullYear(), now.getUTCMonth()),
+        getCategories().catch(() => []),
+      ]);
+
+      const income = txDocs.filter((t) => t.kind === "income").reduce((s, t) => s + Math.abs(t.amount), 0);
+      const expenses = txDocs.filter((t) => t.kind === "expense").reduce((s, t) => s + Math.abs(t.amount), 0);
+
+      const summary: Summary = {
+        balance: income - expenses,
+        income,
+        expenses,
+        currency: budgetDoc.currency || "USD",
+        monthlyBudget: budgetDoc.monthlyBudget || 0,
+      };
+
+      // Map TransactionDoc -> Transaction
+      const transactions: Transaction[] = txDocs.map((t) => ({
+        id: (t as any).$id ?? `${t.userId}-${t.date}`,
+        title: t.title,
+        subtitle: t.subtitle || "",
+        amount: t.amount,
+        categoryId: t.categoryId,
+        kind: t.kind,
+        date: t.date,
+      }));
+
+      // Map CategoryDoc -> Category
+      const categories: Category[] = (catDocs as any[]).map((c) => ({
+        id: c.$id,
+        name: c.name,
+        color: c.color,
+        icon: c.icon,
+      }));
+
+      set({ summary, transactions, categories: categories.length ? categories : mockCategories, loading: false });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to load home data", loading: false });
+      const errorMsg = err instanceof Error ? err.message : "Failed to load home data";
+      console.warn("❌ Fetch home data failed:", errorMsg, err);
+      set({ error: errorMsg, loading: false });
     }
   },
   setCategory: (id) => set({ selectedCategory: id || "all" }),
