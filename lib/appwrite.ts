@@ -1,4 +1,4 @@
-import { Client, Databases, Query, Account, ID } from "appwrite";
+import { Account, Client, Databases, ID, Query } from "appwrite";
 
 const endpoint = process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT;
 const projectId = process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID;

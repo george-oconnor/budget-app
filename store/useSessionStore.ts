@@ -1,15 +1,14 @@
+import {
+    createAccount,
+    createUserProfile,
+    getCurrentSession,
+    getCurrentUser,
+    signIn,
+    signOut,
+} from "@/lib/appwrite";
+import { captureException, clearUser as clearSentryUser, setUser as setSentryUser } from "@/lib/sentry";
 import type { SessionState } from "@/types/type";
 import { create } from "zustand";
-import {
-  getCurrentUser,
-  getCurrentSession,
-  signIn,
-  signOut,
-  createAccount,
-  createUserProfile,
-} from "@/lib/appwrite";
-import { setUser as setSentryUser, clearUser as clearSentryUser } from "@/lib/sentry";
-import { captureException } from "@/lib/sentry";
 
 function splitName(fullName: string) {
   const parts = fullName.trim().split(/\s+/);

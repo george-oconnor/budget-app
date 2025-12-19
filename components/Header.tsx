@@ -1,8 +1,8 @@
 import avatar from "@/assets/images/avatar.png";
-import { Feather } from "@expo/vector-icons";
-import { Image, Pressable, Text, View } from "react-native";
 import { useSessionStore } from "@/store/useSessionStore";
+import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { Image, Pressable, Text, View } from "react-native";
 
 export default function Header({ name = "Alex Morgan" }: { name?: string }) {
   const { logout } = useSessionStore();

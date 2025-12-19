@@ -1,9 +1,9 @@
 import { initSentry } from "@/lib/sentry";
+import { useSessionStore } from "@/store/useSessionStore";
 import { useFonts } from "expo-font";
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { useEffect } from "react";
 import './globals.css';
-import { useSessionStore } from "@/store/useSessionStore";
 
 // Initialize Sentry before app renders
 initSentry();
