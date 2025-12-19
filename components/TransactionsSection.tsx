@@ -1,6 +1,6 @@
-import { FlatList, Text, View } from "react-native";
-import type { Transaction, Category } from "@/types/type";
 import TransactionRow from "@/components/TransactionRow";
+import type { Category, Transaction } from "@/types/type";
+import { FlatList, Text, View } from "react-native";
 
 export default function TransactionsSection({
   transactions,

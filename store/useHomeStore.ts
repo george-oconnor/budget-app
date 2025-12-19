@@ -1,7 +1,8 @@
 import { getCategories, getMonthlyBudget, getTransactionsForMonth } from "@/lib/appwrite";
+import { captureException } from "@/lib/sentry";
 import type { Category, Summary, Transaction } from "@/types/type";
 import { create } from "zustand";
-import { captureException } from "@/lib/sentry";
+import { useSessionStore } from "./useSessionStore";
 
 type HomeState = {
   summary: Summary | null;
@@ -80,7 +81,8 @@ export const useHomeStore = create<HomeState>((set) => ({
     set({ loading: true, error: null });
     try {
       const now = new Date();
-      const userId = "demo-user"; // TODO: read from useSessionStore when auth is ready
+      const user = useSessionStore.getState().user;
+      const userId = user?.id || "demo-user";
 
       const envOk = Boolean(process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT && process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID);
       if (!envOk) {

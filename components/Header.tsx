@@ -1,8 +1,17 @@
 import avatar from "@/assets/images/avatar.png";
 import { Feather } from "@expo/vector-icons";
 import { Image, Pressable, Text, View } from "react-native";
+import { useSessionStore } from "@/store/useSessionStore";
+import { router } from "expo-router";
 
 export default function Header({ name = "Alex Morgan" }: { name?: string }) {
+  const { logout } = useSessionStore();
+
+  const handleLogout = async () => {
+    await logout();
+    router.replace("/login");
+  };
+
   return (
     <View className="flex-row items-center justify-between pt-4 pb-6">
       <View>
@@ -13,7 +22,9 @@ export default function Header({ name = "Alex Morgan" }: { name?: string }) {
         <Pressable className="h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm">
           <Feather name="bell" size={18} color="#181C2E" />
         </Pressable>
-        <Image source={avatar} className="h-10 w-10 rounded-full" />
+        <Pressable onPress={handleLogout}>
+          <Image source={avatar} className="h-10 w-10 rounded-full" />
+        </Pressable>
       </View>
     </View>
   );

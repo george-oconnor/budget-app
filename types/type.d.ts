@@ -29,12 +29,14 @@ export type QuickAction = {
   icon: string; // icon name from Feather glyphMap
 };
 
-export type SessionStatus = "idle" | "loading" | "authenticated" | "error";
+export type SessionStatus = "idle" | "loading" | "authenticated" | "unauthenticated" | "error";
 
 export type SessionUser = {
   id: string;
   email?: string;
   name?: string;
+  firstName?: string;
+  lastName?: string;
   avatarUrl?: string;
 };
 
@@ -43,6 +45,10 @@ export type SessionState = {
   token: string | null;
   status: SessionStatus;
   error: string | null;
+  checkSession: () => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, name: string) => Promise<void>;
+  logout: () => Promise<void>;
   setSession: (payload: { user: SessionUser; token: string }) => void;
   setStatus: (status: SessionStatus) => void;
   setError: (message: string | null) => void;

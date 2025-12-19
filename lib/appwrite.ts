@@ -1,4 +1,4 @@
-import { Client, Databases, Query } from "appwrite";
+import { Client, Databases, Query, Account, ID } from "appwrite";
 
 const endpoint = process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT;
 const projectId = process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID;
@@ -14,6 +14,9 @@ const budgetsTableId =
 const categoriesTableId =
   process.env.EXPO_PUBLIC_APPWRITE_TABLE_CATEGORIES ||
   process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_CATEGORIES;
+const usersTableId =
+  process.env.EXPO_PUBLIC_APPWRITE_TABLE_USERS ||
+  process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_USERS;
 
 export const appwriteClient = new Client();
 if (endpoint && projectId) {
@@ -21,6 +24,82 @@ if (endpoint && projectId) {
 }
 
 export const databases = new Databases(appwriteClient);
+export const account = new Account(appwriteClient);
+
+// Auth functions
+export async function createAccount(email: string, password: string, name: string) {
+  return await account.create(ID.unique(), email, password, name);
+}
+
+export async function signIn(email: string, password: string) {
+  return await account.createEmailPasswordSession(email, password);
+}
+
+export async function signOut() {
+  return await account.deleteSession("current");
+}
+
+export async function getCurrentUser() {
+  try {
+    return await account.get();
+  } catch {
+    return null;
+  }
+}
+
+export async function getCurrentSession() {
+  try {
+    return await account.getSession("current");
+  } catch {
+    return null;
+  }
+}
+
+export type UserDoc = {
+  userId: string; // Appwrite auth user ID
+  email: string;
+  firstName: string;
+  lastName: string;
+  avatarUrl?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export async function createUserProfile(
+  userId: string,
+  email: string,
+  firstName: string,
+  lastName: string
+) {
+  if (!databaseId || !usersTableId) throw new Error("Appwrite env not configured");
+  return await databases.createDocument(databaseId, usersTableId, userId, {
+    userId,
+    email,
+    firstName,
+    lastName,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+export async function getUserProfile(userId: string) {
+  if (!databaseId || !usersTableId) throw new Error("Appwrite env not configured");
+  try {
+    return await databases.getDocument(databaseId, usersTableId, userId) as unknown as UserDoc;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateUserProfile(
+  userId: string,
+  data: Partial<Omit<UserDoc, "userId" | "createdAt">>
+) {
+  if (!databaseId || !usersTableId) throw new Error("Appwrite env not configured");
+  return await databases.updateDocument(databaseId, usersTableId, userId, {
+    ...data,
+    updatedAt: new Date().toISOString(),
+  });
+}
 
 export type BudgetDoc = {
   userId: string;

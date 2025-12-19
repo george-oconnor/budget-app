@@ -9,6 +9,7 @@ import { useEffect, useMemo } from "react";
 import { ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useHomeStore } from "../store/useHomeStore";
+import { useSessionStore } from "../store/useSessionStore";
 
 const quickActions: QuickAction[] = [
   { id: "add", label: "Add", icon: "plus" },
@@ -27,6 +28,8 @@ export default function Index() {
     setCategory,
   } = useHomeStore();
 
+  const { user } = useSessionStore();
+
   useEffect(() => {
     fetchHome();
   }, [fetchHome]);
@@ -43,7 +46,7 @@ export default function Index() {
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
         showsVerticalScrollIndicator={false}
       >
-        <Header />
+        <Header name={user?.name} />
         <RemainingSpendCard summary={summary} transactions={transactions} loading={loading} />
         <IncomeExpenseRow summary={summary} loading={loading} />
         <CategoryChips
