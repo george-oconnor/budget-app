@@ -84,9 +84,8 @@ export async function createUserProfile(
   return await databases.createDocument(databaseId, usersTableId, userId, {
     userId,
     email,
-    firstName,
-    lastName,
-    createdAt: new Date().toISOString(),
+    firstname: firstName,
+    lastname: lastName,
   });
 }
 

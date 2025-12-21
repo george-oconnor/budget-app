@@ -20,9 +20,7 @@ export default function ForgotPasswordScreen() {
     setError("");
 
     try {
-      // Web URL that will handle the redirect to the app
-      // Replace with your deployed URL (e.g., https://yourwebsite.com/reset-password.html)
-      const resetUrl = "https://yourwebsite.com/reset-password.html";
+      const resetUrl = "https://george-oconnor.github.io/budget-app/reset-password.html";
       await requestPasswordReset(email, resetUrl);
       setSuccess(true);
     } catch (err: any) {

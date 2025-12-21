@@ -6,6 +6,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ResetPasswordScreen() {
   const params = useLocalSearchParams<{ userId?: string; secret?: string }>();
+  const [userId, setUserId] = useState(params.userId || "");
+  const [secret, setSecret] = useState(params.secret || "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,8 +30,8 @@ export default function ResetPasswordScreen() {
       return;
     }
 
-    if (!params.userId || !params.secret) {
-      setError("Invalid reset link. Please request a new password reset.");
+    if (!userId || !secret) {
+      setError("Please enter your User ID and Secret from the email.");
       return;
     }
 
@@ -37,7 +39,7 @@ export default function ResetPasswordScreen() {
     setError("");
 
     try {
-      await completePasswordReset(params.userId, params.secret, password);
+      await completePasswordReset(userId, secret, password);
       setSuccess(true);
     } catch (err: any) {
       setError(err.message || "Failed to reset password. Please try again.");
@@ -84,10 +86,34 @@ export default function ResetPasswordScreen() {
           <View className="flex-1 justify-center">
             <Text className="text-3xl font-bold text-dark-100 mb-2">Reset Password</Text>
             <Text className="text-base text-gray-500 mb-8">
-              Enter your new password below.
+              Enter the reset code from your email and your new password.
             </Text>
 
             <View className="gap-4 mb-6">
+              <View>
+                <Text className="text-sm font-semibold text-dark-100 mb-2">User ID</Text>
+                <TextInput
+                  value={userId}
+                  onChangeText={setUserId}
+                  placeholder="User ID from email"
+                  autoCapitalize="none"
+                  editable={!loading}
+                  className="px-4 py-3 rounded-2xl bg-white border border-gray-200 text-dark-100"
+                />
+              </View>
+
+              <View>
+                <Text className="text-sm font-semibold text-dark-100 mb-2">Secret Token</Text>
+                <TextInput
+                  value={secret}
+                  onChangeText={setSecret}
+                  placeholder="Secret token from email"
+                  autoCapitalize="none"
+                  editable={!loading}
+                  className="px-4 py-3 rounded-2xl bg-white border border-gray-200 text-dark-100"
+                />
+              </View>
+
               <View>
                 <Text className="text-sm font-semibold text-dark-100 mb-2">New Password</Text>
                 <TextInput
@@ -125,9 +151,9 @@ export default function ResetPasswordScreen() {
 
             <Pressable
               onPress={handleResetPassword}
-              disabled={loading || !password || !confirmPassword}
+              disabled={loading || !password || !confirmPassword || !userId || !secret}
               className={`py-4 rounded-2xl items-center mb-4 ${
-                loading || !password || !confirmPassword ? "bg-gray-300" : "bg-primary"
+                loading || !password || !confirmPassword || !userId || !secret ? "bg-gray-300" : "bg-primary"
               }`}
             >
               {loading ? (
