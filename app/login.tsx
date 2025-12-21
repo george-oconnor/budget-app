@@ -50,7 +50,12 @@ export default function LoginScreen() {
               </View>
 
               <View>
-                <Text className="text-sm font-semibold text-dark-100 mb-2">Password</Text>
+                <View className="flex-row justify-between items-center mb-2">
+                  <Text className="text-sm font-semibold text-dark-100">Password</Text>
+                  <Pressable onPress={() => router.push("/forgot-password")} disabled={loading}>
+                    <Text className="text-sm text-primary font-semibold">Forgot?</Text>
+                  </Pressable>
+                </View>
                 <TextInput
                   value={password}
                   onChangeText={setPassword}

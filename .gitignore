@@ -2,6 +2,7 @@
 
 .env
 .env.local
+_References
 
 # dependencies
 node_modules/

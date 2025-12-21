@@ -55,6 +55,15 @@ export async function getCurrentSession() {
   }
 }
 
+// Password Recovery functions
+export async function requestPasswordReset(email: string, resetUrl: string) {
+  return await account.createRecovery(email, resetUrl);
+}
+
+export async function completePasswordReset(userId: string, secret: string, newPassword: string) {
+  return await account.updateRecovery(userId, secret, newPassword, newPassword);
+}
+
 export type UserDoc = {
   userId: string; // Appwrite auth user ID
   email: string;
