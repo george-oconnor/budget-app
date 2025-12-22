@@ -275,7 +275,7 @@ export default function ImportPreviewScreen() {
             </View>
           </View>
 
-          {precheckDone && (
+          {precheckDone && parseStats && (
             <View className="rounded-lg bg-blue-50 border border-blue-200 p-3">
               <Text className="text-xs text-blue-900 font-semibold">
                 Parsed {parseStats.parsedRows} of {parseStats.totalRows} data rows

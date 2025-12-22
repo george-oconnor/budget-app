@@ -34,7 +34,10 @@ export default function RootLayout() {
         const secret = queryParams?.secret as string;
         
         if (userId && secret) {
-          router.push(`/reset-password?userId=${userId}&secret=${secret}`);
+          router.push({
+            pathname: '/reset-password',
+            params: { userId, secret }
+          } as any);
         }
       }
     };
