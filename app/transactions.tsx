@@ -1,16 +1,16 @@
+import { formatCurrency } from "@/lib/currencyFunctions";
 import { useHomeStore } from "@/store/useHomeStore";
+import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import {
-  FlatList,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
+    FlatList,
+    Pressable,
+    ScrollView,
+    Text,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Feather } from "@expo/vector-icons";
-import { formatCurrency } from "@/lib/currencyFunctions";
 
 export default function AllTransactionsScreen() {
   const { transactions, categories } = useHomeStore();

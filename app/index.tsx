@@ -6,7 +6,7 @@ import RemainingSpendCard from "@/components/RemainingSpendCard";
 import TransactionsSection from "@/components/TransactionsSection";
 import type { QuickAction } from "@/types/type";
 import { useEffect, useMemo, useState } from "react";
-import { RefreshControl, ScrollView, View } from "react-native";
+import { RefreshControl, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useHomeStore } from "../store/useHomeStore";
 import { useSessionStore } from "../store/useSessionStore";

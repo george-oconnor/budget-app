@@ -1,23 +1,23 @@
 import {
-  parseRevolutCSV,
-  convertRevolutToAppTransaction,
-  ParsedTransaction,
-  RevolutParseResult,
-  SkippedRow,
+    convertRevolutToAppTransaction,
+    ParsedTransaction,
+    parseRevolutCSV,
+    RevolutParseResult,
+    SkippedRow,
 } from "@/lib/csvParser";
+import { Feather } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { router } from "expo-router";
 import { useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    ScrollView,
+    Text,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import * as Clipboard from "expo-clipboard";
-import { Feather } from "@expo/vector-icons";
 
 // Temporary storage for parsed transactions (in-memory)
 type ParsedCache = {

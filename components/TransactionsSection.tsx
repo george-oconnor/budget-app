@@ -1,7 +1,7 @@
 import TransactionRow from "@/components/TransactionRow";
 import type { Category, Transaction } from "@/types/type";
-import { FlatList, Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
+import { FlatList, Pressable, Text, View } from "react-native";
 
 export default function TransactionsSection({
   transactions,

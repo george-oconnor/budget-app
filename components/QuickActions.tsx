@@ -1,7 +1,7 @@
+import type { QuickAction } from "@/types/type";
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { Pressable, Text, View } from "react-native";
-import type { QuickAction } from "@/types/type";
 
 export default function QuickActions({ actions }: { actions: QuickAction[] }) {
   const handleActionPress = (actionId: string) => {

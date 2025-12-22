@@ -1,8 +1,8 @@
 import {
-  getCategories,
-  getMonthlyBudget,
-  getTransactionsForMonth,
-  getTransactionsInRange,
+    getCategories,
+    getMonthlyBudget,
+    getTransactionsForMonth,
+    getTransactionsInRange,
 } from "@/lib/appwrite";
 import { captureException } from "@/lib/sentry";
 import type { Category, Summary, Transaction } from "@/types/type";
