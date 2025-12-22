@@ -1,6 +1,8 @@
 // Revolut CSV format parser
 // Expected columns: Started Date,Completed Date,Description,Payer,Payee,Amount,Fee,Currency,State,Balance
 
+import { categorizeTransaction } from './categorization';
+
 export interface RevolutTransaction {
   startedDate: string;
   completedDate: string;
@@ -132,9 +134,9 @@ export function parseRevolutCSV(csvContent: string): RevolutParseResult {
   return { transactions, skipped, totalRows, skippedDetails };
 }
 
-export function convertRevolutToAppTransaction(
+export async function convertRevolutToAppTransaction(
   revolut: RevolutTransaction
-): ParsedTransaction {
+): Promise<ParsedTransaction> {
   // Determine if income or expense based on amount
   const isExpense = revolut.amount < 0;
   const absoluteAmount = Math.abs(revolut.amount);
@@ -168,80 +170,21 @@ export function convertRevolutToAppTransaction(
     subtitle = revolut.description || (isExpense ? "Expense" : "Income");
   }
 
+  // Auto-categorize using the smart categorization system
+  const categoryId = await categorizeTransaction(
+    title || "",
+    subtitle || "",
+    isExpense
+  );
+
   return {
     title: title || (isExpense ? "Expense" : "Income"),
     subtitle: subtitle || revolut.description || "",
     amount: amountInCents, // Always positive, kind field indicates income/expense
     kind: isExpense ? "expense" : "income",
     date: date.toISOString(),
-    categoryId: categorizeTransaction(revolut.description, isExpense),
+    categoryId,
   };
-}
-
-function categorizeTransaction(description: string, isExpense: boolean): string {
-  const desc = description.toLowerCase();
-
-  // Map common Revolut transaction types to categories
-  const categoryMap: { [key: string]: string } = {
-    // Food & Dining
-    "restaurant": "food",
-    "cafe": "food",
-    "pizza": "food",
-    "burger": "food",
-    "grocery": "food",
-    "supermarket": "food",
-    "sainsbury": "food",
-    "tesco": "food",
-    "asda": "food",
-    "waitrose": "food",
-
-    // Transport
-    "uber": "transport",
-    "lyft": "transport",
-    "taxi": "transport",
-    "shell": "transport",
-    "bp": "transport",
-    "petrol": "transport",
-    "parking": "transport",
-    "train": "transport",
-    "bus": "transport",
-
-    // Shopping
-    "amazon": "shopping",
-    "ebay": "shopping",
-    "asos": "shopping",
-    "primark": "shopping",
-    "zara": "shopping",
-    "h&m": "shopping",
-    "boots": "shopping",
-    "next": "shopping",
-
-    // Bills & Utilities
-    "electricity": "bills",
-    "water": "bills",
-    "gas": "bills",
-    "broadband": "bills",
-    "internet": "bills",
-    "phone": "bills",
-    "insurance": "bills",
-
-    // Entertainment
-    "spotify": "entertainment",
-    "netflix": "entertainment",
-    "cinema": "entertainment",
-    "movie": "entertainment",
-    "theatre": "entertainment",
-    "concert": "entertainment",
-  };
-
-  for (const [keyword, category] of Object.entries(categoryMap)) {
-    if (desc.includes(keyword)) {
-      return category;
-    }
-  }
-
-  // Default categories
-  return isExpense ? "expense" : "income";
 }
 
 function parseCSVLine(line: string): string[] {

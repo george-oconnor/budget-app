@@ -4,6 +4,7 @@ import {
     getTransactionsForMonth,
     getTransactionsInRange,
 } from "@/lib/appwrite";
+import { getQueuedTransactions } from "@/lib/syncQueue";
 import { captureException } from "@/lib/sentry";
 import type { Category, Summary, Transaction } from "@/types/type";
 import { create } from "zustand";
@@ -112,24 +113,36 @@ export const useHomeStore = create<HomeState>((set) => ({
       const rangeStart = new Date(0).toISOString();
       const rangeEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 
-      const [budgetDoc, monthTxDocs, allTxDocs, catDocs] = await Promise.all([
+      const [budgetDoc, monthTxDocs, allTxDocs, catDocs, queuedTxs] = await Promise.all([
         getMonthlyBudget(userId),
         getTransactionsForMonth(userId, now.getUTCFullYear(), now.getUTCMonth()),
         getTransactionsInRange(userId, rangeStart, rangeEnd),
         getCategories().catch(() => []),
+        getQueuedTransactions(),
       ]);
 
+      // Filter queued transactions for this user
+      const userQueuedTxs = queuedTxs.filter(t => t.userId === userId);
+
       const income = monthTxDocs
-        .filter((t) => t.kind === "income")
+        .filter((t) => t.kind === "income" && !(t as any).excludeFromAnalytics)
         .reduce((s, t) => s + Math.abs(t.amount), 0);
       const expenses = monthTxDocs
-        .filter((t) => t.kind === "expense")
+        .filter((t) => t.kind === "expense" && !(t as any).excludeFromAnalytics)
+        .reduce((s, t) => s + Math.abs(t.amount), 0);
+
+      // Include queued transactions in summary calculations
+      const queuedIncome = userQueuedTxs
+        .filter((t) => t.kind === "income" && new Date(t.date).getUTCMonth() === now.getUTCMonth() && !t.excludeFromAnalytics)
+        .reduce((s, t) => s + Math.abs(t.amount), 0);
+      const queuedExpenses = userQueuedTxs
+        .filter((t) => t.kind === "expense" && new Date(t.date).getUTCMonth() === now.getUTCMonth() && !t.excludeFromAnalytics)
         .reduce((s, t) => s + Math.abs(t.amount), 0);
 
       const summary: Summary = {
-        balance: income - expenses,
-        income,
-        expenses,
+        balance: (income + queuedIncome) - (expenses + queuedExpenses),
+        income: income + queuedIncome,
+        expenses: expenses + queuedExpenses,
         currency: budgetDoc.currency || "USD",
         monthlyBudget: budgetDoc.monthlyBudget || 0,
       };
@@ -143,7 +156,25 @@ export const useHomeStore = create<HomeState>((set) => ({
         categoryId: t.categoryId,
         kind: t.kind,
         date: t.date,
+        excludeFromAnalytics: (t as any).excludeFromAnalytics,
       }));
+
+      // Add queued transactions to the list
+      const queuedTransactions: Transaction[] = userQueuedTxs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        subtitle: t.subtitle,
+        amount: t.amount,
+        categoryId: t.categoryId,
+        kind: t.kind,
+        date: t.date,
+        excludeFromAnalytics: t.excludeFromAnalytics,
+      }));
+
+      // Combine and sort by date (most recent first)
+      const allTransactions = [...transactions, ...queuedTransactions].sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
 
       // Map CategoryDoc -> Category
       const categories: Category[] = (catDocs as any[]).map((c) => ({
@@ -161,7 +192,7 @@ export const useHomeStore = create<HomeState>((set) => ({
 
       set({
         summary,
-        transactions,
+        transactions: allTransactions,
         categories: allCategories,
         cycleType: (budgetDoc.cycleType as any) || "first_working_day",
         cycleDay: budgetDoc.cycleDay,

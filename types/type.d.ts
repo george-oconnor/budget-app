@@ -13,6 +13,7 @@ export type Transaction = {
   categoryId: string;
   kind: "income" | "expense";
   date: string;
+  excludeFromAnalytics?: boolean;
 };
 
 export type Summary = {

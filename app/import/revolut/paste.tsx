@@ -76,8 +76,10 @@ export default function RevolutImportPasteScreen() {
         return;
       }
 
-      // Convert to app format
-      const convertedTransactions = parseResult.transactions.map(convertRevolutToAppTransaction);
+      // Convert to app format (async for categorization)
+      const convertedTransactions = await Promise.all(
+        parseResult.transactions.map(convertRevolutToAppTransaction)
+      );
 
       // Store in cache instead of passing through params
       parsedTransactionsCache = {

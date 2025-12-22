@@ -1,11 +1,10 @@
-import CategoryChips from "@/components/CategoryChips";
 import Header from "@/components/Header";
 import IncomeExpenseRow from "@/components/IncomeExpenseRow";
 import QuickActions from "@/components/QuickActions";
 import RemainingSpendCard from "@/components/RemainingSpendCard";
 import TransactionsSection from "@/components/TransactionsSection";
 import type { QuickAction } from "@/types/type";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshControl, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useHomeStore } from "../store/useHomeStore";
@@ -23,10 +22,8 @@ export default function Index() {
     summary,
     transactions,
     categories,
-    selectedCategory,
     loading,
     fetchHome,
-    setCategory,
     cycleType,
     cycleDay,
   } = useHomeStore();
@@ -49,11 +46,6 @@ export default function Index() {
       setRefreshing(false);
     }
   };
-
-  const filteredTx = useMemo(() => {
-    if (selectedCategory === "all") return transactions;
-    return transactions.filter((t) => t.categoryId === selectedCategory);
-  }, [selectedCategory, transactions]);
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -78,13 +70,8 @@ export default function Index() {
           cycleDay={cycleDay}
         />
         <IncomeExpenseRow summary={summary} loading={loading} />
-        <CategoryChips
-          categories={categories}
-          selected={selectedCategory}
-          onSelect={setCategory}
-        />
         <QuickActions actions={quickActions} />
-        <TransactionsSection transactions={filteredTx} categories={categories} currency={summary?.currency ?? "USD"} loading={loading} />
+        <TransactionsSection transactions={transactions} categories={categories} currency={summary?.currency ?? "USD"} loading={loading} />
       </ScrollView>
     </SafeAreaView>
   );

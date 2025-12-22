@@ -1,4 +1,4 @@
-import { getCycleStartDate } from "@/lib/budgetCycle";
+import { getCycleBudgetStats } from "@/lib/budgetCycle";
 import { formatCurrency } from "@/lib/currencyFunctions";
 import type { Summary, Transaction } from "@/types/type";
 import { Feather } from "@expo/vector-icons";
@@ -20,26 +20,20 @@ export default function RemainingSpendCard({
   cycleDay?: number;
 }) {
   const currency = summary?.currency ?? "USD";
-  const now = new Date();
-  
-  // Calculate cycle start date
-  const cycleStart = getCycleStartDate(cycleType, cycleDay);
-  
-  // Filter expenses in current cycle
-  const cycleExpenses = transactions
-    .filter((t) => {
-      const d = new Date(t.date);
-      return t.kind === "expense" && d >= cycleStart && d <= now;
-    })
-    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
   const budget = summary?.monthlyBudget ?? 0;
-  const remaining = budget - cycleExpenses;
-  const isOverspent = remaining < 0;
-  const displayRemaining = Math.abs(remaining);
-  const progress = budget > 0 ? Math.min(1, cycleExpenses / budget) : 0;
   const noBudgetSet = budget === 0;
   const [pressed, setPressed] = useState(false);
+  const [cardPressed, setCardPressed] = useState(false);
+  
+  // Calculate budget statistics for the current cycle
+  const { expenses: cycleExpenses, remaining, isOverspent, progress } = getCycleBudgetStats(
+    transactions,
+    budget,
+    cycleType,
+    cycleDay
+  );
+  
+  const displayRemaining = Math.abs(remaining);
 
   if (noBudgetSet) {
     return (
@@ -62,33 +56,42 @@ export default function RemainingSpendCard({
     );
   }
 
-  const bgColor = isOverspent ? "bg-red-600" : "bg-primary";
+  const bgColor = isOverspent ? "bg-red-600" : "bg-green-600";
 
   return (
-    <View className={`rounded-3xl ${bgColor} px-5 py-6 shadow-md`}>
-      <View className="flex-row items-center justify-between mb-1">
-        <Text className="text-white/80 text-sm">
-          {isOverspent ? "Overspent" : "Remaining Spend"}
+    <Pressable
+      onPress={() => router.push("/spend-analytics")}
+      onPressIn={() => setCardPressed(true)}
+      onPressOut={() => setCardPressed(false)}
+    >
+      <View className={`rounded-3xl ${bgColor} px-5 py-6 shadow-md ${cardPressed ? "opacity-80" : "opacity-100"}`}>
+        <View className="flex-row items-center justify-between mb-1">
+          <Text className="text-white/80 text-sm">
+            {isOverspent ? "Overspent" : "Remaining Spend"}
+          </Text>
+          <Pressable 
+            onPress={(e) => {
+              e.stopPropagation();
+              router.push("/set-budget");
+            }}
+            className="p-2 rounded-full active:bg-white/20"
+          >
+            <Feather name="edit-2" size={18} color="white" />
+          </Pressable>
+        </View>
+        <Text className="text-white text-4xl font-bold mt-1">
+          {loading ? "…" : `${isOverspent ? "-" : ""}${formatCurrency(displayRemaining / 100, currency)}`}
         </Text>
-        <Pressable 
-          onPress={() => router.push("/set-budget")}
-          className="p-2 rounded-full active:bg-white/20"
-        >
-          <Feather name="edit-2" size={18} color="white" />
-        </Pressable>
-      </View>
-      <Text className="text-white text-4xl font-bold mt-1">
-        {loading ? "…" : `${isOverspent ? "-" : ""}${formatCurrency(displayRemaining / 100, currency)}`}
-      </Text>
-      <View className="mt-4">
-        <View className="h-2 w-full rounded-full bg-white/20 overflow-hidden">
-          <View style={{ width: `${progress * 100}%` }} className={`h-2 ${isOverspent ? "bg-red-300" : "bg-white"} rounded-full`} />
-        </View>
-        <View className="flex-row justify-between mt-2">
-          <Text className="text-white/80 text-xs">Spent: {formatCurrency(cycleExpenses / 100, currency)}</Text>
-          <Text className="text-white/80 text-xs">Budget: {formatCurrency(budget / 100, currency)}</Text>
+        <View className="mt-4">
+          <View className="h-2 w-full rounded-full bg-white/20 overflow-hidden">
+            <View style={{ width: `${progress * 100}%` }} className={`h-2 ${isOverspent ? "bg-red-300" : "bg-white"} rounded-full`} />
+          </View>
+          <View className="flex-row justify-between mt-2">
+            <Text className="text-white/80 text-xs">Spent: {formatCurrency(cycleExpenses / 100, currency)}</Text>
+            <Text className="text-white/80 text-xs">Budget: {formatCurrency(budget / 100, currency)}</Text>
+          </View>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }

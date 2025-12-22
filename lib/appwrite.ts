@@ -1,4 +1,5 @@
 import { Account, Client, Databases, ID, Query } from "appwrite";
+import { captureException } from "./sentry";
 
 const endpoint = process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT;
 const projectId = process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID;
@@ -243,6 +244,34 @@ export async function getTransactionsInRange(userId: string, startISO: string, e
   return res.documents as unknown as TransactionDoc[];
 }
 
+// Paginated transaction fetching for infinite scroll
+export async function getTransactionsPaginated(
+  userId: string, 
+  limit: number = 25, 
+  cursor?: string
+): Promise<{ documents: TransactionDoc[]; hasMore: boolean; lastCursor?: string }> {
+  if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
+  
+  const queries: any[] = [
+    Query.equal("userId", userId),
+    Query.orderDesc("date"),
+    Query.limit(limit),
+  ];
+
+  if (cursor) {
+    queries.push(Query.cursorAfter(cursor));
+  }
+
+  const res = await databases.listDocuments(databaseId, transactionsTableId, queries);
+  const docs = res.documents as unknown as TransactionDoc[];
+  
+  return {
+    documents: docs,
+    hasMore: docs.length === limit,
+    lastCursor: docs.length > 0 ? docs[docs.length - 1].$id : undefined,
+  };
+}
+
 // Fetch all transactions in range with pagination to avoid missing duplicates
 export async function getTransactionsInRangeAll(userId: string, startISO: string, endISO: string) {
   if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
@@ -274,6 +303,49 @@ export async function getTransactionsInRangeAll(userId: string, startISO: string
   }
 
   return all as unknown as TransactionDoc[];
+}
+
+// Delete all transactions for a user
+export async function deleteAllTransactionsForUser(userId: string): Promise<{ deleted: number; failed: number }> {
+  if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
+
+  let deleted = 0;
+  let failed = 0;
+  const limit = 500;
+  let cursor: string | undefined;
+
+  // Fetch and delete in batches
+  while (true) {
+    const queries: any[] = [
+      Query.equal("userId", userId),
+      Query.limit(limit),
+    ];
+
+    if (cursor) {
+      queries.push(Query.cursorAfter(cursor));
+    }
+
+    const res = await databases.listDocuments(databaseId, transactionsTableId, queries);
+    const docs = res.documents || [];
+    
+    if (docs.length === 0) break;
+
+    // Delete each transaction
+    for (const doc of docs) {
+      try {
+        await databases.deleteDocument(databaseId, transactionsTableId, doc.$id);
+        deleted++;
+      } catch (error) {
+        console.error(`Failed to delete transaction ${doc.$id}:`, error);
+        failed++;
+      }
+    }
+
+    if (docs.length < limit) break;
+    cursor = docs[docs.length - 1]?.$id;
+  }
+
+  return { deleted, failed };
 }
 
 // Fetch every transaction for a user (paginated) for global dedupe comparisons
@@ -320,30 +392,38 @@ export async function createTransaction(
   amount: number,
   kind: "income" | "expense",
   categoryId: string,
-  date: string
+  date: string,
+  customId?: string // Optional custom ID to prevent duplicates
 ) {
   if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
   
-  return await databases.createDocument(databaseId, transactionsTableId, ID.unique(), {
-    userId,
-    title,
-    subtitle: subtitle || "",
-    amount,
-    kind,
-    categoryId,
-    date,
-  });
+  return await databases.createDocument(
+    databaseId, 
+    transactionsTableId, 
+    customId || ID.unique(), // Use custom ID if provided, otherwise generate
+    {
+      userId,
+      title,
+      subtitle: subtitle || "",
+      amount,
+      kind,
+      categoryId,
+      date,
+    }
+  );
 }
 
 export type BulkCreateResult = {
   created: number;
   failed: number;
   errors: Array<{ message: string; title?: string; date?: string }>;
+  successfulIndices?: number[]; // Indices of successfully created transactions
 };
 
 export async function createBulkTransactions(
   userId: string,
   transactions: Array<{
+    id?: string; // Queue transaction ID for duplicate prevention
     title: string;
     subtitle?: string;
     amount: number;
@@ -352,57 +432,99 @@ export async function createBulkTransactions(
     date: string;
   }>,
   onProgress?: (current: number, total: number) => void,
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean,
+  onBatchSuccess?: (indices: number[]) => Promise<void>,
 ): Promise<BulkCreateResult> {
   if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
   
   const errors: BulkCreateResult["errors"] = [];
+  const successfulIndices: number[] = [];
   let created = 0;
   const BATCH_SIZE = 2; // Process 2 transactions at a time to avoid rate limits
   const DELAY_MS = 2000; // 2 second delay between batches
   
-  for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
-    if (shouldCancel?.()) {
-      break;
-    }
-    const batch = transactions.slice(i, i + BATCH_SIZE);
-    
-    // Process batch in parallel
-    const batchPromises = batch.map(async (tx) => {
-      if (shouldCancel?.()) return null;
-      try {
-        const res = await createTransaction(
-          userId,
-          tx.title,
-          tx.subtitle,
-          tx.amount,
-          tx.kind,
-          tx.categoryId,
-          tx.date
-        );
-        return res;
-      } catch (err: any) {
-        const message = err?.message || "Unknown error";
-        errors.push({ message, title: tx.title, date: tx.date });
-        console.error("Error creating transaction:", message, tx.title, tx.date);
-        return null;
+  try {
+    for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
+      if (shouldCancel?.()) {
+        break;
       }
+      const batch = transactions.slice(i, i + BATCH_SIZE);
+      
+      // Process batch in parallel
+      const batchPromises = batch.map(async (tx, batchIndex) => {
+        if (shouldCancel?.()) return null;
+        try {
+          const res = await createTransaction(
+            userId,
+            tx.title,
+            tx.subtitle,
+            tx.amount,
+            tx.kind,
+            tx.categoryId,
+            tx.date,
+            tx.id // Pass the queue transaction ID to prevent duplicates
+          );
+          return { success: true, index: i + batchIndex };
+        } catch (err: any) {
+          const message = err?.message || "Unknown error";
+          
+          // If it's a duplicate error, treat it as success (already exists)
+          if (message.includes('Document with the requested ID already exists') || 
+              message.includes('already exists')) {
+            return { success: true, index: i + batchIndex };
+          }
+          
+          errors.push({ message, title: tx.title, date: tx.date });
+          console.error("Error creating transaction:", message, tx.title, tx.date);
+          return null;
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      const successCount = batchResults.filter(r => r !== null).length;
+      created += successCount;
+      
+      // Track which transactions succeeded
+      const batchSuccessfulIndices: number[] = [];
+      batchResults.forEach(result => {
+        if (result?.success) {
+          successfulIndices.push(result.index);
+          batchSuccessfulIndices.push(result.index);
+        }
+      });
+      
+      // Immediately notify of successful batch so queue can be updated
+      if (batchSuccessfulIndices.length > 0 && onBatchSuccess) {
+        try {
+          await onBatchSuccess(batchSuccessfulIndices);
+        } catch (batchUpdateError) {
+          console.error('Error updating queue after batch success:', batchUpdateError);
+        }
+      }
+      
+      // Report progress based on attempted items
+      if (onProgress) {
+        onProgress(Math.min(i + BATCH_SIZE, transactions.length), transactions.length);
+      }
+      
+      // Add delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < transactions.length) {
+        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+      }
+    }
+  } catch (batchError: any) {
+    // If batch processing fails, log it but don't crash
+    const errorMessage = batchError?.message || 'Unknown error during batch processing';
+    console.error('Error during batch transaction creation:', errorMessage);
+    captureException(batchError instanceof Error ? batchError : new Error(errorMessage), {
+      context: 'bulk_transaction_create_error',
+      errorMessage,
+      transactionCount: transactions.length,
+      userId,
     });
-    
-    const batchResults = await Promise.all(batchPromises);
-    created += batchResults.filter(r => r !== null).length;
-    
-    // Report progress based on attempted items
-    if (onProgress) {
-      onProgress(Math.min(i + BATCH_SIZE, transactions.length), transactions.length);
-    }
-    
-    // Add delay between batches to avoid rate limiting
-    if (i + BATCH_SIZE < transactions.length) {
-      await new Promise(resolve => setTimeout(resolve, DELAY_MS));
-    }
+    errors.push({ message: errorMessage });
   }
   
-  return { created, failed: errors.length, errors };
+  return { created, failed: errors.length, errors, successfulIndices };
 }
 

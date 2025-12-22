@@ -93,7 +93,7 @@ export default function RevolutImportScreen() {
   return (
     <SafeAreaView className="flex-1 bg-white">
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 20, paddingTop: 20 }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 100 }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
@@ -168,30 +168,26 @@ export default function RevolutImportScreen() {
         </View>
 
         {/* Info Box */}
-        <View className="rounded-xl bg-blue-50 border border-blue-200 p-4 mb-8">
+        <View className="rounded-xl bg-blue-50 border border-blue-200 p-4">
           <Text className="text-xs font-semibold text-blue-900 mb-2">🔒 Your Data is Safe</Text>
           <Text className="text-xs text-blue-800 leading-5">
             We never store your Revolut credentials. The import process only reads the CSV data
             you provide and stores it securely in your account.
           </Text>
         </View>
-
-        {/* Start Button */}
-        <View className="mt-auto mb-4 gap-3">
-          <Pressable
-            onPress={() => router.push("/import/revolut/paste")}
-            className="rounded-2xl bg-primary py-4 items-center active:opacity-80"
-          >
-            <Text className="text-white text-base font-bold">I have my export ready</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => router.back()}
-            className="rounded-2xl border-2 border-gray-200 py-4 items-center bg-white"
-          >
-            <Text className="text-gray-700 text-base font-semibold">Cancel</Text>
-          </Pressable>
-        </View>
       </ScrollView>
+
+      {/* Fixed Bottom Button */}
+      <View className="absolute bottom-0 left-0 right-0 px-5 pb-6" style={{ 
+        background: 'linear-gradient(to top, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0) 100%)'
+      }}>
+        <Pressable
+          onPress={() => router.push("/import/revolut/paste")}
+          className="rounded-2xl bg-primary py-4 items-center active:opacity-80 shadow-lg"
+        >
+          <Text className="text-white text-base font-bold">I have my export ready</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }

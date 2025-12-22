@@ -2,6 +2,7 @@ import TransactionRow from "@/components/TransactionRow";
 import type { Category, Transaction } from "@/types/type";
 import { router } from "expo-router";
 import { FlatList, Pressable, Text, View } from "react-native";
+import { useTransactionDetailStore } from "@/store/useTransactionDetailStore";
 
 export default function TransactionsSection({
   transactions,
@@ -15,6 +16,12 @@ export default function TransactionsSection({
   loading: boolean;
 }) {
   const topTransactions = transactions.slice(0, 5);
+  const { setSelectedTransactionId } = useTransactionDetailStore();
+
+  const handleTransactionPress = (transactionId: string) => {
+    setSelectedTransactionId(transactionId);
+    router.push("/transaction-detail");
+  };
 
   return (
     <View className="mt-6 mb-4">
@@ -35,11 +42,13 @@ export default function TransactionsSection({
           renderItem={({ item }) => {
             const category = categories.find((c) => c.id === item.categoryId);
             return (
-              <TransactionRow
-                transaction={item}
-                currency={currency}
-                categoryName={category?.name}
-              />
+              <Pressable onPress={() => handleTransactionPress(item.id)}>
+                <TransactionRow
+                  transaction={item}
+                  currency={currency}
+                  categoryName={category?.name}
+                />
+              </Pressable>
             );
           }}
           ListEmptyComponent={() => (

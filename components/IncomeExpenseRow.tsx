@@ -1,7 +1,9 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { Summary } from "@/types/type";
 import { formatCurrency } from "@/lib/currencyFunctions";
+import { router } from "expo-router";
+import { useState } from "react";
 
 export default function IncomeExpenseRow({
   summary,
@@ -11,26 +13,43 @@ export default function IncomeExpenseRow({
   loading: boolean;
 }) {
   const currency = summary?.currency ?? "USD";
+  const [incomePressed, setIncomePressed] = useState(false);
+  const [expensePressed, setExpensePressed] = useState(false);
+
   return (
     <View className="flex-row gap-4 mt-4">
-      <View className="flex-1 rounded-3xl bg-white px-5 py-5 shadow-sm border border-gray-100">
-        <View className="flex-row items-center gap-2">
-          <MaterialCommunityIcons name="arrow-top-right" size={18} color="#2F9B65" />
-          <Text className="text-dark-100 text-base font-bold">Income</Text>
+      <Pressable
+        onPress={() => router.push("/transactions?filter=income")}
+        onPressIn={() => setIncomePressed(true)}
+        onPressOut={() => setIncomePressed(false)}
+        className="flex-1"
+      >
+        <View className={`rounded-3xl px-5 py-5 shadow-sm ${incomePressed ? "bg-white border-gray-200" : "bg-green-50 border-green-100"} border`}>
+          <View className="flex-row items-center gap-2">
+            <MaterialCommunityIcons name="arrow-top-right" size={18} color="#2F9B65" />
+            <Text className="text-dark-100 text-base font-bold">Income</Text>
+          </View>
+          <Text className="text-dark-100 text-2xl font-bold mt-2">
+            {loading ? "…" : formatCurrency((summary?.income ?? 0) / 100, currency)}
+          </Text>
         </View>
-        <Text className="text-dark-100 text-2xl font-bold mt-2">
-          {loading ? "…" : formatCurrency((summary?.income ?? 0) / 100, currency)}
-        </Text>
-      </View>
-      <View className="flex-1 rounded-3xl bg-white px-5 py-5 shadow-sm border border-gray-100">
-        <View className="flex-row items-center gap-2">
-          <MaterialCommunityIcons name="arrow-bottom-right" size={18} color="#F14141" />
-          <Text className="text-dark-100 text-base font-bold">Expenses</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => router.push("/transactions?filter=expense")}
+        onPressIn={() => setExpensePressed(true)}
+        onPressOut={() => setExpensePressed(false)}
+        className="flex-1"
+      >
+        <View className={`rounded-3xl px-5 py-5 shadow-sm ${expensePressed ? "bg-white border-gray-200" : "bg-red-50 border-red-100"} border`}>
+          <View className="flex-row items-center gap-2">
+            <MaterialCommunityIcons name="arrow-bottom-right" size={18} color="#F14141" />
+            <Text className="text-dark-100 text-base font-bold">Expenses</Text>
+          </View>
+          <Text className="text-dark-100 text-2xl font-bold mt-2">
+            {loading ? "…" : formatCurrency((summary?.expenses ?? 0) / 100, currency)}
+          </Text>
         </View>
-        <Text className="text-dark-100 text-2xl font-bold mt-2">
-          {loading ? "…" : formatCurrency((summary?.expenses ?? 0) / 100, currency)}
-        </Text>
-      </View>
+      </Pressable>
     </View>
   );
 }

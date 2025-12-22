@@ -4,6 +4,7 @@ import { useFonts } from "expo-font";
 import * as Linking from 'expo-linking';
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { useEffect, useRef } from "react";
+import { useAutoSync } from "@/hooks/useAutoSync";
 import './globals.css';
 
 // Initialize Sentry before app renders
@@ -22,6 +23,9 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   const navigationAttempted = useRef(false);
+
+  // Enable auto-sync
+  useAutoSync();
 
   // Handle deep links for password reset
   useEffect(() => {
@@ -70,18 +74,14 @@ export default function RootLayout() {
 
     const inAuthGroup = segments[0] === "auth";
 
-    console.log("Auth routing check:", { status, inAuthGroup, currentSegment: segments[0] });
-
     if (status === "unauthenticated" && !inAuthGroup) {
       if (!navigationAttempted.current) {
         navigationAttempted.current = true;
-        console.log("Redirecting to login - unauthenticated");
         router.replace("/auth");
       }
     } else if (status === "authenticated" && inAuthGroup) {
       if (!navigationAttempted.current) {
         navigationAttempted.current = true;
-        console.log("Redirecting to home - authenticated");
         router.replace("/");
       }
     } else {
@@ -90,5 +90,5 @@ export default function RootLayout() {
     }
   }, [status, segments]);
 
-  return <Stack screenOptions={{ headerShown: false }}/>;
+  return <Stack screenOptions={{ headerShown: false }} />;
 }

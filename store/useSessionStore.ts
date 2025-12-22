@@ -30,21 +30,17 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ status: "loading" });
     try {
       const [user, session] = await Promise.all([getCurrentUser(), getCurrentSession()]);
-      console.log("checkSession - auth user:", user?.$id, "session:", session?.$id);
       
       if (!user || !session) {
-        console.log("checkSession - no user or session found");
         set({ user: null, token: null, status: "unauthenticated", error: null });
         return;
       }
       
       // Verify user profile exists in database
       const userProfile = await getUserProfile(user.$id);
-      console.log("checkSession - user profile:", userProfile ? "exists" : "not found");
       
       if (!userProfile) {
         // User has auth session but no profile - sign them out
-        console.warn("User has session but no profile in database, signing out and clearing sessions");
         try {
           await clearAllSessions();
         } catch (e) {
@@ -55,15 +51,10 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
       
       setSentryUser({ id: user.$id, email: user.email, username: user.name });
-      console.log("checkSession - setting authenticated user:", {
-        id: user.$id,
-        name: user.name,
-        email: user.email,
-      });
       set({ user: { id: user.$id, email: user.email, name: user.name }, token: session.$id, status: "authenticated", error: null });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to check session";
-      console.error("checkSession error:", errorMsg);
+      console.error("Auth check failed:", errorMsg);
       captureException(err instanceof Error ? err : new Error(errorMsg));
       set({ user: null, token: null, status: "unauthenticated", error: errorMsg });
     }

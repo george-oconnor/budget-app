@@ -1,4 +1,5 @@
 import { createBulkTransactions, getAllTransactionsForUser } from "@/lib/appwrite";
+import { queueTransactionsForSync } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
 import { Feather } from "@expo/vector-icons";
@@ -30,13 +31,15 @@ const normalizeDateToISO = (value: string) => {
   if (!value) return "";
   const t = new Date(value).getTime();
   if (Number.isNaN(t)) return (value || "").trim();
-  return new Date(t).toISOString(); // normalize timezone/format
+  // Preserve exact timestamp including milliseconds for precise duplicate detection
+  return new Date(t).toISOString();
 };
 // Use absolute amount to be resilient to legacy records that stored negative expenses
+// Include exact timestamp to distinguish multiple transactions on the same day
 const makeKeyFromTransaction = (t: Transaction) =>
-  `${normalizeText(t.title)}|${Math.abs(t.amount)}|${t.kind}|${normalizeDateToISO(t.date)}`;
+  `${normalizeText(t.title)}|${Math.abs(t.amount)}|${t.kind}|${t.date}`;
 const makeKeyFromDoc = (doc: any) =>
-  `${normalizeText(doc.title || "")}|${Math.abs(Number(doc.amount))}|${doc.kind}|${normalizeDateToISO(doc.date || "")}`;
+  `${normalizeText(doc.title || "")}|${Math.abs(Number(doc.amount))}|${doc.kind}|${doc.date || ""}`;
 
 export default function ImportPreviewScreen() {
   const { user } = useSessionStore();
@@ -86,20 +89,17 @@ export default function ImportPreviewScreen() {
         // Fetch all existing transactions for this user (paginated) to catch any duplicates
         const existing = await getAllTransactionsForUser(user.id);
         const existingKeys = new Set(existing.map(makeKeyFromDoc));
-        const newKeys = new Set<string>();
         const dupKeys = new Set<string>();
         let unique = 0;
         let skipped = 0;
         for (const t of transactions) {
           const key = makeKeyFromTransaction(t);
           const isExisting = existingKeys.has(key);
-          const isRepeatInUpload = newKeys.has(key);
-          if (isExisting || isRepeatInUpload) {
+          if (isExisting) {
             skipped++;
             dupKeys.add(key);
             continue;
           }
-          newKeys.add(key);
           unique++;
         }
         setPreSkippedCount(skipped);
@@ -128,26 +128,17 @@ export default function ImportPreviewScreen() {
     setLoading(true);
 
     try {
-      console.log(`Starting import of ${transactions.length} transactions`);
+      console.log(`Starting local import of ${transactions.length} transactions`);
 
-      // Compute import date range
-      const times = transactions.map((t) => new Date(t.date).getTime());
-      const startISO = new Date(Math.min(...times)).toISOString();
-      const endISO = new Date(Math.max(...times)).toISOString();
-
-      // Fetch existing transactions in range to dedupe
-      // Fetch all existing transactions for this user (paginated) to avoid missing duplicates
+      // Fetch existing transactions to dedupe
       const existing = await getAllTransactionsForUser(user.id);
       const existingKeys = new Set(existing.map(makeKeyFromDoc));
 
-      // Dedupe within new list and against existing
-      const newKeys = new Set<string>();
+      // Dedupe against existing only (not within new list)
       const deduped: Transaction[] = [];
       for (const t of transactions) {
         const key = makeKeyFromTransaction(t);
         if (existingKeys.has(key)) continue;
-        if (newKeys.has(key)) continue;
-        newKeys.add(key);
         deduped.push(t);
       }
 
@@ -156,29 +147,16 @@ export default function ImportPreviewScreen() {
       setUniqueCount(deduped.length);
       setImportProgress({ current: 0, total: deduped.length });
 
-      // Create transactions with progress callback
-      const result = await createBulkTransactions(
-        user.id,
-        deduped,
-        (current, total) => {
-          console.log(`Import progress: ${current}/${total}`);
-          setImportProgress({ current, total });
-        },
-        () => cancelRef.current
-      );
+      // Queue transactions locally instead of uploading immediately
+      await queueTransactionsForSync(user.id, deduped);
 
-      const failedCount = result.failed;
-      const createdCount = result.created;
+      console.log(`Queued ${deduped.length} transactions for sync`);
 
-      console.log(`Import complete: ${createdCount} created, ${failedCount} failed`);
-
-      const errorDetails = failedCount
-        ? `\nFailed to create ${failedCount} transaction${failedCount === 1 ? "" : "s"}.`
-        : "";
+      setImportProgress({ current: deduped.length, total: deduped.length });
 
       Alert.alert(
-        "Success",
-        `Imported ${createdCount} transactions.${skipped > 0 ? `\nSkipped ${skipped} duplicate(s).` : ""}${errorDetails}`,
+        "Import Queued",
+        `Added ${deduped.length} transactions to your queue.${skipped > 0 ? `\nSkipped ${skipped} duplicate(s).` : ""}\n\nThey will sync to your account shortly.`,
         [
           {
             text: "View Home",
@@ -339,6 +317,13 @@ export default function ImportPreviewScreen() {
 
         {/* Action Buttons */}
         <View className="px-5 py-4 gap-3 border-t border-gray-200">
+          {!precheckDone && !loading && (
+            <View className="items-center">
+              <Text className="text-xs text-gray-600">
+                Checking for duplicates...
+              </Text>
+            </View>
+          )}
           {precheckDone && !loading && (
             <View className="items-center">
               <Text className="text-xs text-gray-600">
@@ -355,12 +340,19 @@ export default function ImportPreviewScreen() {
           )}
           <Pressable
             onPress={handleImport}
-            disabled={loading || transactions.length === 0}
+            disabled={!precheckDone || loading || transactions.length === 0}
             className={`rounded-2xl py-4 items-center ${
-              loading || transactions.length === 0 ? "bg-gray-300" : "bg-primary"
+              !precheckDone || loading || transactions.length === 0 ? "bg-gray-300" : "bg-primary"
             }`}
           >
-            {loading ? (
+            {!precheckDone ? (
+              <View className="flex-row items-center gap-2">
+                <ActivityIndicator color="#fff" />
+                <Text className="text-white text-base font-bold">
+                  Checking for duplicates...
+                </Text>
+              </View>
+            ) : loading ? (
               <View className="flex-row items-center gap-2">
                 <ActivityIndicator color="#fff" />
                 <Text className="text-white text-base font-bold">
@@ -371,7 +363,7 @@ export default function ImportPreviewScreen() {
               <View className="flex-row items-center gap-2">
                 <Feather name="check-circle" size={18} color="white" />
                 <Text className="text-white text-base font-bold">
-                  Import {precheckDone ? preUniqueCount : transactions.length}
+                  Import {preUniqueCount}
                 </Text>
               </View>
             )}

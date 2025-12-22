@@ -1,3 +1,5 @@
+import type { Transaction } from "@/types/type";
+
 /**
  * Calculate the start date of the current budget cycle
  */
@@ -8,7 +10,6 @@ export function getCycleStartDate(
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
-  const day = now.getDate();
 
   let cycleStart: Date;
 
@@ -20,41 +21,66 @@ export function getCycleStartDate(
       while (cycleStart.getUTCDay() === 0 || cycleStart.getUTCDay() === 6) {
         cycleStart.setUTCDate(cycleStart.getUTCDate() + 1);
       }
-      // If first working day has passed this month, start from first working day of next month
-      if (cycleStart < now) {
-        cycleStart = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0));
+      // If we haven't reached the first working day yet, use previous month's first working day
+      if (cycleStart > now) {
+        cycleStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
         while (cycleStart.getUTCDay() === 0 || cycleStart.getUTCDay() === 6) {
           cycleStart.setUTCDate(cycleStart.getUTCDate() + 1);
         }
-        // Go back to previous month's first working day
-        cycleStart.setUTCMonth(cycleStart.getUTCMonth() - 1);
       }
       break;
     }
 
     case "last_working_day": {
-      // Start from last working day of previous month
+      // Find the last working day of the previous month
       cycleStart = new Date(Date.UTC(year, month, 0, 0, 0, 0)); // Last day of previous month
       while (cycleStart.getUTCDay() === 0 || cycleStart.getUTCDay() === 6) {
         cycleStart.setUTCDate(cycleStart.getUTCDate() - 1);
+      }
+      
+      // If we haven't passed this date yet this cycle, use the month before
+      const currentMonthLastWorking = new Date(Date.UTC(year, month + 1, 0, 0, 0, 0));
+      while (currentMonthLastWorking.getUTCDay() === 0 || currentMonthLastWorking.getUTCDay() === 6) {
+        currentMonthLastWorking.setUTCDate(currentMonthLastWorking.getUTCDate() - 1);
+      }
+      
+      if (now >= currentMonthLastWorking) {
+        cycleStart = currentMonthLastWorking;
       }
       break;
     }
 
     case "specific_date": {
-      // Start from specific day of previous month
       const cycleDay_ = cycleDay ?? 1;
-      cycleStart = new Date(Date.UTC(year, month - 1, cycleDay_, 0, 0, 0));
+      // Start from the cycle day of current month
+      cycleStart = new Date(Date.UTC(year, month, cycleDay_, 0, 0, 0));
+      
+      // If we haven't reached this day yet, use previous month
+      if (cycleStart > now) {
+        cycleStart = new Date(Date.UTC(year, month - 1, cycleDay_, 0, 0, 0));
+      }
       break;
     }
 
     case "last_friday": {
-      // Start from last Friday of previous month
-      const lastDay = new Date(Date.UTC(year, month, 0));
-      cycleStart = new Date(lastDay);
+      // Find the last Friday of the current month
+      const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0));
+      let lastFriday = new Date(lastDayOfMonth);
+      
       // Go back to last Friday (5 = Friday)
-      while (cycleStart.getUTCDay() !== 5) {
-        cycleStart.setUTCDate(cycleStart.getUTCDate() - 1);
+      while (lastFriday.getUTCDay() !== 5) {
+        lastFriday.setUTCDate(lastFriday.getUTCDate() - 1);
+      }
+      
+      // If we haven't reached the last Friday of current month yet, use previous month's last Friday
+      if (lastFriday > now) {
+        const prevMonthLastDay = new Date(Date.UTC(year, month, 0));
+        cycleStart = new Date(prevMonthLastDay);
+        while (cycleStart.getUTCDay() !== 5) {
+          cycleStart.setUTCDate(cycleStart.getUTCDate() - 1);
+        }
+      } else {
+        cycleStart = lastFriday;
       }
       break;
     }
@@ -64,4 +90,99 @@ export function getCycleStartDate(
   }
 
   return cycleStart;
+}
+
+/**
+ * Calculate the end date of the current budget cycle (always the current moment)
+ */
+export function getCycleEndDate(): Date {
+  return new Date();
+}
+
+/**
+ * Filter transactions that fall within the current budget cycle
+ * @param transactions - Array of all transactions
+ * @param cycleType - The type of budget cycle
+ * @param cycleDay - Optional day of month for specific_date cycle type
+ * @returns Filtered array of transactions within the current cycle
+ */
+export function getTransactionsInCurrentCycle(
+  transactions: Transaction[],
+  cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday" = "first_working_day",
+  cycleDay?: number
+): Transaction[] {
+  const cycleStart = getCycleStartDate(cycleType, cycleDay);
+  const cycleEnd = getCycleEndDate();
+
+  return transactions.filter((transaction) => {
+    const transactionDate = new Date(transaction.date);
+    return transactionDate >= cycleStart && transactionDate <= cycleEnd;
+  });
+}
+
+/**
+ * Calculate total expenses within the current budget cycle
+ * @param transactions - Array of all transactions
+ * @param cycleType - The type of budget cycle
+ * @param cycleDay - Optional day of month for specific_date cycle type
+ * @returns Total expenses in cents/smallest currency unit
+ */
+export function getCycleExpenses(
+  transactions: Transaction[],
+  cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday" = "first_working_day",
+  cycleDay?: number
+): number {
+  const cycleTransactions = getTransactionsInCurrentCycle(transactions, cycleType, cycleDay);
+  
+  return cycleTransactions
+    .filter((t) => t.kind === "expense" && !t.excludeFromAnalytics)
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+}
+
+/**
+ * Calculate total income within the current budget cycle
+ * @param transactions - Array of all transactions
+ * @param cycleType - The type of budget cycle
+ * @param cycleDay - Optional day of month for specific_date cycle type
+ * @returns Total income in cents/smallest currency unit
+ */
+export function getCycleIncome(
+  transactions: Transaction[],
+  cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday" = "first_working_day",
+  cycleDay?: number
+): number {
+  const cycleTransactions = getTransactionsInCurrentCycle(transactions, cycleType, cycleDay);
+  
+  return cycleTransactions
+    .filter((t) => t.kind === "income" && !t.excludeFromAnalytics)
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+}
+
+/**
+ * Calculate budget statistics for the current cycle
+ * @param transactions - Array of all transactions
+ * @param budget - Monthly budget in cents/smallest currency unit
+ * @param cycleType - The type of budget cycle
+ * @param cycleDay - Optional day of month for specific_date cycle type
+ * @returns Object containing budget statistics
+ */
+export function getCycleBudgetStats(
+  transactions: Transaction[],
+  budget: number,
+  cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday" = "first_working_day",
+  cycleDay?: number
+) {
+  const expenses = getCycleExpenses(transactions, cycleType, cycleDay);
+  const remaining = budget - expenses;
+  const isOverspent = remaining < 0;
+  const progress = budget > 0 ? Math.min(1, expenses / budget) : 0;
+
+  return {
+    expenses,
+    remaining,
+    isOverspent,
+    progress,
+    cycleStart: getCycleStartDate(cycleType, cycleDay),
+    cycleEnd: getCycleEndDate(),
+  };
 }
