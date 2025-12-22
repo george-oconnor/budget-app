@@ -3,6 +3,7 @@
 .env
 .env.local
 _References
+package-lock.json
 
 # dependencies
 node_modules/
