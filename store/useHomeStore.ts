@@ -1,4 +1,9 @@
-import { getCategories, getMonthlyBudget, getTransactionsForMonth } from "@/lib/appwrite";
+import {
+  getCategories,
+  getMonthlyBudget,
+  getTransactionsForMonth,
+  getTransactionsInRange,
+} from "@/lib/appwrite";
 import { captureException } from "@/lib/sentry";
 import type { Category, Summary, Transaction } from "@/types/type";
 import { create } from "zustand";
@@ -11,6 +16,8 @@ type HomeState = {
   transactions: Transaction[];
   loading: boolean;
   error: string | null;
+  cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday";
+  cycleDay?: number;
   fetchHome: () => Promise<void>;
   setCategory: (id: string) => void;
 };
@@ -77,12 +84,22 @@ export const useHomeStore = create<HomeState>((set) => ({
   transactions: [],
   loading: false,
   error: null,
+  cycleType: "first_working_day",
+  cycleDay: undefined,
   fetchHome: async () => {
     set({ loading: true, error: null });
     try {
       const now = new Date();
       const user = useSessionStore.getState().user;
-      const userId = user?.id || "demo-user";
+      const userId = user?.id;
+      
+      console.log("fetchHome - user:", user?.id, "name:", user?.name);
+      
+      if (!userId) {
+        console.warn("fetchHome - no user ID, cannot fetch transactions");
+        set({ summary: null, transactions: [], loading: false, error: "No user logged in" });
+        return;
+      }
 
       const envOk = Boolean(process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT && process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID);
       if (!envOk) {
@@ -92,14 +109,22 @@ export const useHomeStore = create<HomeState>((set) => ({
         return;
       }
 
-      const [budgetDoc, txDocs, catDocs] = await Promise.all([
+      const rangeStart = new Date(0).toISOString();
+      const rangeEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+      const [budgetDoc, monthTxDocs, allTxDocs, catDocs] = await Promise.all([
         getMonthlyBudget(userId),
         getTransactionsForMonth(userId, now.getUTCFullYear(), now.getUTCMonth()),
+        getTransactionsInRange(userId, rangeStart, rangeEnd),
         getCategories().catch(() => []),
       ]);
 
-      const income = txDocs.filter((t) => t.kind === "income").reduce((s, t) => s + Math.abs(t.amount), 0);
-      const expenses = txDocs.filter((t) => t.kind === "expense").reduce((s, t) => s + Math.abs(t.amount), 0);
+      const income = monthTxDocs
+        .filter((t) => t.kind === "income")
+        .reduce((s, t) => s + Math.abs(t.amount), 0);
+      const expenses = monthTxDocs
+        .filter((t) => t.kind === "expense")
+        .reduce((s, t) => s + Math.abs(t.amount), 0);
 
       const summary: Summary = {
         balance: income - expenses,
@@ -110,7 +135,7 @@ export const useHomeStore = create<HomeState>((set) => ({
       };
 
       // Map TransactionDoc -> Transaction
-      const transactions: Transaction[] = txDocs.map((t) => ({
+      const transactions: Transaction[] = allTxDocs.map((t) => ({
         id: (t as any).$id ?? `${t.userId}-${t.date}`,
         title: t.title,
         subtitle: t.subtitle || "",
@@ -134,7 +159,14 @@ export const useHomeStore = create<HomeState>((set) => ({
         ...(categories.length ? categories : mockCategories.slice(1)), // Exclude mock "All" if using real categories
       ];
 
-      set({ summary, transactions, categories: allCategories, loading: false });
+      set({
+        summary,
+        transactions,
+        categories: allCategories,
+        cycleType: (budgetDoc.cycleType as any) || "first_working_day",
+        cycleDay: budgetDoc.cycleDay,
+        loading: false,
+      });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to load home data";
       console.warn("❌ Fetch home data failed:", errorMsg, err);

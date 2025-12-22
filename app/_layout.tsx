@@ -3,7 +3,7 @@ import { useSessionStore } from "@/store/useSessionStore";
 import { useFonts } from "expo-font";
 import * as Linking from 'expo-linking';
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import './globals.css';
 
 // Initialize Sentry before app renders
@@ -21,6 +21,7 @@ export default function RootLayout() {
   const { checkSession, status } = useSessionStore();
   const router = useRouter();
   const segments = useSegments();
+  const navigationAttempted = useRef(false);
 
   // Handle deep links for password reset
   useEffect(() => {
@@ -64,12 +65,25 @@ export default function RootLayout() {
   useEffect(() => {
     if (status === "loading" || status === "idle") return;
 
-    const inAuthGroup = segments[0] === "login" || segments[0] === "signup" || segments[0] === "forgot-password" || segments[0] === "reset-password";
+    const inAuthGroup = segments[0] === "auth";
+
+    console.log("Auth routing check:", { status, inAuthGroup, currentSegment: segments[0] });
 
     if (status === "unauthenticated" && !inAuthGroup) {
-      router.replace("/login");
+      if (!navigationAttempted.current) {
+        navigationAttempted.current = true;
+        console.log("Redirecting to login - unauthenticated");
+        router.replace("/auth");
+      }
     } else if (status === "authenticated" && inAuthGroup) {
-      router.replace("/");
+      if (!navigationAttempted.current) {
+        navigationAttempted.current = true;
+        console.log("Redirecting to home - authenticated");
+        router.replace("/");
+      }
+    } else {
+      // Reset flag when in correct route
+      navigationAttempted.current = false;
     }
   }, [status, segments]);
 

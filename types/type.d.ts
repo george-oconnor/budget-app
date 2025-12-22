@@ -37,7 +37,6 @@ export type SessionUser = {
   name?: string;
   firstName?: string;
   lastName?: string;
-  avatarUrl?: string;
 };
 
 export type SessionState = {

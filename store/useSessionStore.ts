@@ -1,10 +1,12 @@
 import {
-    createAccount,
-    createUserProfile,
-    getCurrentSession,
-    getCurrentUser,
-    signIn,
-    signOut,
+  clearAllSessions,
+  createAccount,
+  createUserProfile,
+  getCurrentSession,
+  getCurrentUser,
+  getUserProfile,
+  signIn,
+  signOut,
 } from "@/lib/appwrite";
 import { captureException, clearUser as clearSentryUser, setUser as setSentryUser } from "@/lib/sentry";
 import type { SessionState } from "@/types/type";
@@ -28,14 +30,40 @@ export const useSessionStore = create<SessionState>((set) => ({
     set({ status: "loading" });
     try {
       const [user, session] = await Promise.all([getCurrentUser(), getCurrentSession()]);
-      if (user && session) {
-        setSentryUser({ id: user.$id, email: user.email, username: user.name });
-        set({ user: { id: user.$id, email: user.email, name: user.name }, token: session.$id, status: "authenticated", error: null });
-      } else {
+      console.log("checkSession - auth user:", user?.$id, "session:", session?.$id);
+      
+      if (!user || !session) {
+        console.log("checkSession - no user or session found");
         set({ user: null, token: null, status: "unauthenticated", error: null });
+        return;
       }
+      
+      // Verify user profile exists in database
+      const userProfile = await getUserProfile(user.$id);
+      console.log("checkSession - user profile:", userProfile ? "exists" : "not found");
+      
+      if (!userProfile) {
+        // User has auth session but no profile - sign them out
+        console.warn("User has session but no profile in database, signing out and clearing sessions");
+        try {
+          await clearAllSessions();
+        } catch (e) {
+          console.error("Failed to clear sessions:", e);
+        }
+        set({ user: null, token: null, status: "unauthenticated", error: null });
+        return;
+      }
+      
+      setSentryUser({ id: user.$id, email: user.email, username: user.name });
+      console.log("checkSession - setting authenticated user:", {
+        id: user.$id,
+        name: user.name,
+        email: user.email,
+      });
+      set({ user: { id: user.$id, email: user.email, name: user.name }, token: session.$id, status: "authenticated", error: null });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to check session";
+      console.error("checkSession error:", errorMsg);
       captureException(err instanceof Error ? err : new Error(errorMsg));
       set({ user: null, token: null, status: "unauthenticated", error: errorMsg });
     }
@@ -47,6 +75,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       await signIn(email, password);
       const user = await getCurrentUser();
       if (user) {
+        await getUserProfile(user.$id);
         setSentryUser({ id: user.$id, email: user.email, username: user.name });
         set({ user: { id: user.$id, email: user.email, name: user.name }, token: user.$id, status: "authenticated", error: null });
       }
@@ -70,9 +99,10 @@ export const useSessionStore = create<SessionState>((set) => ({
       
       const user = await getCurrentUser();
       if (user) {
+        await getUserProfile(authUser.$id);
         setSentryUser({ id: user.$id, email: user.email, username: user.name });
         set({
-          user: { id: user.$id, email: user.email, name: user.name, firstName, lastName },
+          user: { id: user.$id, email: user.email, name: user.name },
           token: user.$id,
           status: "authenticated",
           error: null,
@@ -89,12 +119,15 @@ export const useSessionStore = create<SessionState>((set) => ({
   logout: async () => {
     try {
       await signOut();
-      clearSentryUser();
-      set({ user: null, token: null, status: "unauthenticated", error: null });
     } catch (err) {
+      // Log the error but don't fail - the user might be deleted or session invalid
       const errorMsg = err instanceof Error ? err.message : "Logout failed";
       captureException(err instanceof Error ? err : new Error(errorMsg));
-      set({ error: errorMsg });
+      console.warn("Sign out failed, but clearing local session anyway:", errorMsg);
+    } finally {
+      // Always clear the local session, even if signOut failed
+      clearSentryUser();
+      set({ user: null, token: null, status: "unauthenticated", error: null });
     }
   },
 

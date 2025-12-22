@@ -63,7 +63,7 @@ export default function ResetPasswordScreen() {
           </View>
 
           <Pressable
-            onPress={() => router.replace("/login")}
+            onPress={() => router.replace("/auth")}
             className="py-4 rounded-2xl items-center bg-primary"
           >
             <Text className="text-white text-base font-bold">Go to Login</Text>
