@@ -1,12 +1,12 @@
 import {
-  clearAllSessions,
-  createAccount,
-  createUserProfile,
-  getCurrentSession,
-  getCurrentUser,
-  getUserProfile,
-  signIn,
-  signOut,
+    clearAllSessions,
+    createAccount,
+    createUserProfile,
+    getCurrentSession,
+    getCurrentUser,
+    getUserProfile,
+    signIn,
+    signOut,
 } from "@/lib/appwrite";
 import { captureException, clearUser as clearSentryUser, setUser as setSentryUser } from "@/lib/sentry";
 import type { SessionState } from "@/types/type";
