@@ -1,8 +1,8 @@
 import TransactionRow from "@/components/TransactionRow";
+import { useTransactionDetailStore } from "@/store/useTransactionDetailStore";
 import type { Category, Transaction } from "@/types/type";
 import { router } from "expo-router";
 import { FlatList, Pressable, Text, View } from "react-native";
-import { useTransactionDetailStore } from "@/store/useTransactionDetailStore";
 
 export default function TransactionsSection({
   transactions,

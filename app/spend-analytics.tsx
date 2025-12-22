@@ -1,15 +1,13 @@
-import Header from "@/components/Header";
-import RemainingSpendCard from "@/components/RemainingSpendCard";
 import SpendingOverTimeChart from "@/components/SpendingOverTimeChart";
-import { useHomeStore } from "@/store/useHomeStore";
-import { formatCurrency } from "@/lib/currencyFunctions";
 import { getCycleBudgetStats } from "@/lib/budgetCycle";
+import { formatCurrency } from "@/lib/currencyFunctions";
+import { useHomeStore } from "@/store/useHomeStore";
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, ScrollView, Text, TouchableWithoutFeedback, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useState } from "react";
+
 
 export default function SpendAnalytics() {
   const { summary, transactions, categories, loading, cycleType, cycleDay } = useHomeStore();

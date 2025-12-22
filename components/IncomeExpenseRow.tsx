@@ -1,9 +1,9 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Pressable, Text, View } from "react-native";
-import type { Summary } from "@/types/type";
 import { formatCurrency } from "@/lib/currencyFunctions";
+import type { Summary } from "@/types/type";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
+import { Pressable, Text, View } from "react-native";
 
 export default function IncomeExpenseRow({
   summary,

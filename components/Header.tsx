@@ -1,10 +1,10 @@
+import { getDeleteStatus } from "@/lib/deleteQueue";
+import { getPendingTransactionCount, getSyncStatus, SyncStatus } from "@/lib/syncQueue";
 import { useSessionStore } from "@/store/useSessionStore";
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useState, useEffect, useRef } from "react";
-import { Pressable, Text, View, Modal, Animated, Easing } from "react-native";
-import { getSyncStatus, getPendingTransactionCount, SyncStatus } from "@/lib/syncQueue";
-import { getDeleteStatus } from "@/lib/deleteQueue";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Easing, Pressable, Text, View } from "react-native";
 
 export default function Header({ 
   name = "NO USER",

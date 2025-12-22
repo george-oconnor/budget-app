@@ -1,9 +1,9 @@
+import { getDeleteStatus, initializeDeleteStatus, startDeletingTransactions } from '@/lib/deleteQueue';
+import { cleanupSyncQueue, getPendingTransactionCount, getSyncStatus, initializeSyncStatus, startSyncingTransactions } from '@/lib/syncQueue';
+import { useSessionStore } from '@/store/useSessionStore';
+import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import { startSyncingTransactions, getPendingTransactionCount, getSyncStatus, initializeSyncStatus, cleanupSyncQueue } from '@/lib/syncQueue';
-import { startDeletingTransactions, getDeleteStatus, initializeDeleteStatus } from '@/lib/deleteQueue';
-import { useSessionStore } from '@/store/useSessionStore';
 
 export function useAutoSync() {
   const { user } = useSessionStore();

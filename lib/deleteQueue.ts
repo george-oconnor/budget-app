@@ -1,10 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Query } from "appwrite";
 import { AppState } from "react-native";
 import { databases } from "./appwrite";
-import { Query } from "appwrite";
+import { captureException, captureMessage } from './sentry';
 import { resetSyncStatus } from "./syncQueue";
-import * as Notifications from 'expo-notifications';
-import { captureMessage, captureException } from './sentry';
 
 const DATABASE_ID = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
 const TRANSACTION_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSACTIONS || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_TRANSACTIONS;

@@ -1,9 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppState } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import { createBulkTransactions, databases } from './appwrite';
 import { ID, Query } from 'appwrite';
-import { captureException, captureMessage } from './sentry';
+import * as Notifications from 'expo-notifications';
+import { AppState } from 'react-native';
+import { createBulkTransactions, databases } from './appwrite';
+import { captureException } from './sentry';
 
 export interface QueuedTransaction {
   id: string;
@@ -49,14 +49,14 @@ export interface SyncStatus {
  */
 export async function queueTransactionsForSync(
   userId: string,
-  transactions: Array<{
+  transactions: {
     title: string;
     subtitle: string;
     amount: number;
     kind: 'income' | 'expense';
     date: string;
     categoryId: string;
-  }>
+  }[]
 ): Promise<QueuedTransaction[]> {
   try {
     const queue = await getQueuedTransactions();

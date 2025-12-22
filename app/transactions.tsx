@@ -1,22 +1,22 @@
-import { formatCurrency } from "@/lib/currencyFunctions";
 import { getTransactionsPaginated } from "@/lib/appwrite";
+import { formatCurrency } from "@/lib/currencyFunctions";
 import { getQueuedTransactions } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
 import { useTransactionDetailStore } from "@/store/useTransactionDetailStore";
+import type { Transaction } from "@/types/type";
 import { Feather } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+    ActivityIndicator,
     FlatList,
     Pressable,
     ScrollView,
     Text,
     View,
-    ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import type { Transaction } from "@/types/type";
 
 type GroupedTransaction = {
   type: "header" | "transaction";

@@ -1,17 +1,17 @@
-import { router } from "expo-router";
-import { useState, useEffect } from "react";
-import { View, Text, Pressable, ScrollView, ActivityIndicator, TextInput, Switch, Modal, FlatList } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Feather } from "@expo/vector-icons";
+import { databases } from "@/lib/appwrite";
+import { learnMerchantCategory } from "@/lib/categorization";
+import { formatCurrency } from "@/lib/currencyFunctions";
+import { getQueuedTransactions } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
 import { useTransactionDetailStore } from "@/store/useTransactionDetailStore";
-import { formatCurrency } from "@/lib/currencyFunctions";
-import { databases } from "@/lib/appwrite";
-import { getQueuedTransactions } from "@/lib/syncQueue";
-import { learnMerchantCategory } from "@/lib/categorization";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Transaction } from "@/types/type";
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router } from "expo-router";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function TransactionDetailScreen() {
   const { selectedTransactionId } = useTransactionDetailStore();

@@ -1,4 +1,4 @@
-import { createBulkTransactions, getAllTransactionsForUser } from "@/lib/appwrite";
+import { getAllTransactionsForUser } from "@/lib/appwrite";
 import { queueTransactionsForSync } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";

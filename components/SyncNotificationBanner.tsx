@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Animated, Pressable, Text, View } from 'react-native';
 import { getSyncStatus, startSyncingTransactions, SyncStatus } from '@/lib/syncQueue';
 import { Feather } from '@expo/vector-icons';
+import { useEffect, useState } from 'react';
+import { Animated, Pressable, Text, View } from 'react-native';
 
 export function SyncNotificationBanner() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);

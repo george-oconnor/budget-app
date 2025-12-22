@@ -4,8 +4,8 @@ import {
     getTransactionsForMonth,
     getTransactionsInRange,
 } from "@/lib/appwrite";
-import { getQueuedTransactions } from "@/lib/syncQueue";
 import { captureException } from "@/lib/sentry";
+import { getQueuedTransactions } from "@/lib/syncQueue";
 import type { Category, Summary, Transaction } from "@/types/type";
 import { create } from "zustand";
 import { useSessionStore } from "./useSessionStore";

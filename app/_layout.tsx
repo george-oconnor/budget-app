@@ -1,10 +1,10 @@
+import { useAutoSync } from "@/hooks/useAutoSync";
 import { initSentry } from "@/lib/sentry";
 import { useSessionStore } from "@/store/useSessionStore";
 import { useFonts } from "expo-font";
 import * as Linking from 'expo-linking';
 import { SplashScreen, Stack, useRouter, useSegments } from "expo-router";
 import { useEffect, useRef } from "react";
-import { useAutoSync } from "@/hooks/useAutoSync";
 import './globals.css';
 
 // Initialize Sentry before app renders

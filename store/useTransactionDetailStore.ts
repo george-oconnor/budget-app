@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import type { Transaction } from "@/types/type";
 
 interface TransactionDetailStore {
   selectedTransactionId: string | null;

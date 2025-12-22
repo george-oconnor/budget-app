@@ -1,7 +1,7 @@
+import { formatCurrency } from "@/lib/currencyFunctions";
+import type { Transaction } from "@/types/type";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Text, View } from "react-native";
-import type { Transaction } from "@/types/type";
-import { formatCurrency } from "@/lib/currencyFunctions";
 
 export default function TransactionRow({
   transaction,
