@@ -18,6 +18,9 @@ const categoriesTableId =
 const usersTableId =
   process.env.EXPO_PUBLIC_APPWRITE_TABLE_USERS ||
   process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_USERS;
+const balancesTableId =
+  process.env.EXPO_PUBLIC_APPWRITE_TABLE_BALANCES ||
+  process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_BALANCES;
 
 export const appwriteClient = new Client();
 if (endpoint && projectId) {
@@ -170,6 +173,86 @@ export type CategoryDoc = {
   color?: string;
   icon?: string;
 };
+
+export type AccountBalanceDoc = {
+  userId: string;
+  accountKey: string; // stable key for the account (provider + type + currency + name slug)
+  accountName: string;
+  accountType: string; // current | pocket | vault | savings
+  provider?: string; // revolut, aib, etc.
+  currency: string;
+  balance: number;
+  lastUpdated: string;
+};
+
+export async function upsertAccountBalance(
+  userId: string,
+  data: {
+    accountKey: string;
+    accountName: string;
+    accountType: string;
+    provider?: string;
+    currency: string;
+    balance: number;
+    lastUpdated?: string;
+  }
+) {
+  if (!databaseId || !balancesTableId) throw new Error("Appwrite env not configured");
+
+  try {
+    const res = await databases.listDocuments(databaseId, balancesTableId, [
+      Query.equal("userId", userId),
+      Query.equal("accountKey", data.accountKey),
+      Query.limit(1),
+    ]);
+
+    const doc = res.documents?.[0];
+    const payload = {
+      userId,
+      accountKey: data.accountKey,
+      accountName: data.accountName,
+      accountType: data.accountType,
+      provider: data.provider,
+      currency: data.currency,
+      balance: data.balance,
+      lastUpdated: data.lastUpdated || new Date().toISOString(),
+    };
+
+    if (doc) {
+      return await databases.updateDocument(databaseId, balancesTableId, doc.$id, payload);
+    }
+
+    return await databases.createDocument(databaseId, balancesTableId, ID.unique(), payload);
+  } catch (err) {
+    console.error("upsertAccountBalance error", err);
+    captureException(err);
+    throw err;
+  }
+}
+
+export async function deleteAccountBalanceDoc(userId: string, accountKey: string) {
+  if (!databaseId || !balancesTableId) throw new Error("Appwrite env not configured");
+
+  try {
+    const res = await databases.listDocuments(databaseId, balancesTableId, [
+      Query.equal("userId", userId),
+      Query.equal("accountKey", accountKey),
+      Query.limit(1),
+    ]);
+
+    const doc = res.documents?.[0];
+    if (!doc) {
+      return { deleted: false, reason: "not-found" } as const;
+    }
+
+    await databases.deleteDocument(databaseId, balancesTableId, doc.$id);
+    return { deleted: true } as const;
+  } catch (err) {
+    console.error("deleteAccountBalanceDoc error", err);
+    captureException(err);
+    throw err;
+  }
+}
 
 export async function getMonthlyBudget(userId: string) {
   if (!databaseId || !budgetsTableId) throw new Error("Appwrite env not configured");
@@ -393,23 +476,37 @@ export async function createTransaction(
   kind: "income" | "expense",
   categoryId: string,
   date: string,
-  customId?: string // Optional custom ID to prevent duplicates
+  currency: string = 'EUR',
+  customId?: string, // Optional custom ID to prevent duplicates
+  excludeFromAnalytics?: boolean,
+  isAnalyticsProtected?: boolean
 ) {
   if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
+  
+  const data: any = {
+    userId,
+    title,
+    subtitle: subtitle || "",
+    amount,
+    kind,
+    categoryId,
+    date,
+    currency,
+  };
+  
+  if (excludeFromAnalytics !== undefined) {
+    data.excludeFromAnalytics = excludeFromAnalytics;
+  }
+  
+  if (isAnalyticsProtected !== undefined) {
+    data.isAnalyticsProtected = isAnalyticsProtected;
+  }
   
   return await databases.createDocument(
     databaseId, 
     transactionsTableId, 
     customId || ID.unique(), // Use custom ID if provided, otherwise generate
-    {
-      userId,
-      title,
-      subtitle: subtitle || "",
-      amount,
-      kind,
-      categoryId,
-      date,
-    }
+    data
   );
 }
 
@@ -430,6 +527,9 @@ export async function createBulkTransactions(
     kind: "income" | "expense";
     categoryId: string;
     date: string;
+    currency: string;
+    excludeFromAnalytics?: boolean;
+    isAnalyticsProtected?: boolean;
   }>,
   onProgress?: (current: number, total: number) => void,
   shouldCancel?: () => boolean,
@@ -462,7 +562,10 @@ export async function createBulkTransactions(
             tx.kind,
             tx.categoryId,
             tx.date,
-            tx.id // Pass the queue transaction ID to prevent duplicates
+            tx.currency,
+            tx.id, // Pass the queue transaction ID to prevent duplicates
+            tx.excludeFromAnalytics,
+            tx.isAnalyticsProtected
           );
           return { success: true, index: i + batchIndex };
         } catch (err: any) {

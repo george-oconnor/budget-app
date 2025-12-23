@@ -1,5 +1,6 @@
+import RemainingSpendCard from "@/components/RemainingSpendCard";
 import SpendingOverTimeChart from "@/components/SpendingOverTimeChart";
-import { getCycleBudgetStats } from "@/lib/budgetCycle";
+import { getCycleBudgetStats, getCycleStartDate, getDaysRemainingInCycle, getTransactionsInCurrentCycle } from "@/lib/budgetCycle";
 import { formatCurrency } from "@/lib/currencyFunctions";
 import { useHomeStore } from "@/store/useHomeStore";
 import { Feather } from "@expo/vector-icons";
@@ -7,6 +8,51 @@ import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, ScrollView, Text, TouchableWithoutFeedback, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+// Map category names to default icons
+function getDefaultIcon(categoryName: string): string {
+  const name = (categoryName || '').toLowerCase();
+  const iconMap: Record<string, string> = {
+    food: 'coffee',
+    groceries: 'shopping-bag',
+    transport: 'navigation',
+    entertainment: 'play',
+    shopping: 'shopping-bag',
+    bills: 'file',
+    utilities: 'zap',
+    health: 'heart',
+    services: 'cloud',
+    sport: 'activity',
+    general: 'inbox',
+    income: 'trending-down',
+  };
+  return iconMap[name] || 'shopping-bag';
+}
+
+// Normalize potentially invalid icon names to valid Feather icons
+function normalizeFeatherIconName(icon: string | undefined, categoryName: string | undefined): string {
+  const raw = (icon || '').toLowerCase().trim();
+  // Map common aliases/invalid names
+  const aliasMap: Record<string, string> = {
+    cart: 'shopping-bag',
+    'shopping-cart': 'shopping-bag',
+    flash: 'zap',
+    movie: 'play',
+    film: 'play',
+    bus: 'truck',
+    utensils: 'coffee',
+    'fork-knife': 'coffee',
+    'silverware-fork-knife': 'coffee',
+    'file-text': 'file',
+  };
+  const normalized = aliasMap[raw] || raw;
+  // Known safe set; fallback to default if outside
+  const validSet = new Set([
+    'shopping-bag','zap','play','truck','file','cloud','activity','heart','navigation','inbox','coffee','dollar-sign','credit-card','chevron-left','check-circle'
+  ]);
+  if (!normalized) return getDefaultIcon(categoryName || '');
+  return validSet.has(normalized) ? normalized : getDefaultIcon(categoryName || '');
+}
 
 
 export default function SpendAnalytics() {
@@ -20,6 +66,24 @@ export default function SpendAnalytics() {
   const budget = summary?.monthlyBudget ?? 0;
   const currency = summary?.currency ?? "USD";
 
+  const transferCategoryIds = useMemo(
+    () =>
+      categories
+        .filter((cat) => cat.name?.toLowerCase().includes("transfer"))
+        .map((cat) => cat.id),
+    [categories]
+  );
+
+  const analyticsTransactions = useMemo(
+    () =>
+      transactions.filter(
+        (t) =>
+          !t.excludeFromAnalytics &&
+          !transferCategoryIds.includes(t.categoryId)
+      ),
+    [transactions, transferCategoryIds]
+  );
+
   // Animate dropdown open/close
   useEffect(() => {
     Animated.spring(dropdownAnim, {
@@ -32,29 +96,97 @@ export default function SpendAnalytics() {
 
   // Calculate budget statistics for the current cycle
   const { expenses: cycleExpenses, remaining, isOverspent, progress } = getCycleBudgetStats(
-    transactions.filter((t) => !t.excludeFromAnalytics),
+    analyticsTransactions,
     budget,
     cycleType,
     cycleDay
   );
 
   const displayRemaining = Math.abs(remaining);
+  const daysRemaining = getDaysRemainingInCycle(cycleType, cycleDay);
+
+  // Calculate total spent in current cycle
+  const totalSpentThisCycle = cycleExpenses;
+
+  // Calculate spending comparison with last month (same day)
+  const spendingComparison = useMemo(() => {
+    const now = new Date();
+    const currentCycleStart = getCycleStartDate(cycleType, cycleDay);
+    const daysIntoCycle = Math.floor((now.getTime() - currentCycleStart.getTime()) / (1000 * 60 * 60 * 24));
+
+    // Calculate last month's cycle start
+    const lastMonthCycleStart = new Date(currentCycleStart);
+    lastMonthCycleStart.setMonth(lastMonthCycleStart.getMonth() - 1);
+    
+    // Calculate the equivalent day last month
+    const lastMonthEquivalentDay = new Date(lastMonthCycleStart);
+    lastMonthEquivalentDay.setDate(lastMonthEquivalentDay.getDate() + daysIntoCycle);
+
+    // Get transactions from last month's cycle up to the equivalent day
+    const lastMonthTransactions = analyticsTransactions.filter((t) => {
+      const txDate = new Date(t.date);
+      return (
+        t.kind === "expense" &&
+        txDate >= lastMonthCycleStart &&
+        txDate <= lastMonthEquivalentDay
+      );
+    });
+
+    const lastMonthSpent = lastMonthTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const difference = totalSpentThisCycle - lastMonthSpent;
+    const percentageChange = lastMonthSpent > 0 ? ((difference / lastMonthSpent) * 100) : 0;
+
+    return {
+      difference,
+      percentageChange,
+      isHigher: difference > 0,
+      lastMonthSpent,
+    };
+  }, [analyticsTransactions, cycleType, cycleDay, totalSpentThisCycle]);
 
   // Calculate category spending stats
   const categoryStats = useMemo(() => {
-    const stats = categories
-      .filter((cat) => cat.id !== "all")
+    // Filter transactions to current cycle
+    const cycleTransactions = getTransactionsInCurrentCycle(
+      analyticsTransactions,
+      cycleType,
+      cycleDay
+    );
+    
+    const categorizedStats = categories
+      .filter((cat) => cat.id !== "all" && !transferCategoryIds.includes(cat.id))
       .map((category) => {
-        const catTransactions = transactions.filter(
-          (t) => t.categoryId === category.id && t.kind === "expense" && !t.excludeFromAnalytics
+        const catTransactions = cycleTransactions.filter(
+          (t) => t.categoryId === category.id && t.kind === "expense"
         );
-        const totalSpent = catTransactions.reduce((sum, t) => sum + t.amount, 0);
+        const totalSpent = catTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
         return {
           ...category,
           totalSpent,
           count: catTransactions.length,
         };
-      })
+      });
+
+    // Add uncategorized transactions
+    const uncategorizedTransactions = cycleTransactions.filter(
+      (t) => t.categoryId === "uncategorized" && t.kind === "expense"
+    );
+    const uncategorizedSpent = uncategorizedTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    const allStats = uncategorizedSpent > 0
+      ? [
+          ...categorizedStats,
+          {
+            id: "uncategorized",
+            name: "Uncategorized",
+            color: "#9CA3AF",
+            totalSpent: uncategorizedSpent,
+            count: uncategorizedTransactions.length,
+          },
+        ]
+      : categorizedStats;
+
+    const stats = allStats
       .filter((cat) => cat.totalSpent > 0)
       .sort((a, b) => b.totalSpent - a.totalSpent);
 
@@ -64,14 +196,14 @@ export default function SpendAnalytics() {
       ...cat,
       percentage: totalExpenses > 0 ? (cat.totalSpent / totalExpenses) * 100 : 0,
     }));
-  }, [categories, transactions]);
+  }, [categories, analyticsTransactions, cycleType, cycleDay, transferCategoryIds]);
 
   // Group transactions by day
   const dailyTransactions = useMemo(() => {
     const grouped = new Map<string, Transaction[]>();
     
-    transactions
-      .filter(t => t.kind === "expense" && !t.excludeFromAnalytics)
+    analyticsTransactions
+      .filter(t => t.kind === "expense")
       .forEach((t) => {
         const date = new Date(t.date);
         const dateKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
@@ -90,7 +222,7 @@ export default function SpendAnalytics() {
         total: txs.reduce((sum, t) => sum + t.amount, 0),
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [transactions]);
+  }, [analyticsTransactions]);
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -119,43 +251,65 @@ export default function SpendAnalytics() {
         scrollEnabled={!isDraggingChart}
       >
 
+        {/* Total Spent Display Above Chart */}
+        <View className="px-5 mb-1">
+          <Text 
+            className="text-3xl font-bold"
+            style={{
+              lineHeight: 36,
+              color: (() => {
+                const isMoreThanLastMonth = spendingComparison.isHigher;
+                const isOverBudget = isOverspent;
+                
+                // Red: more than last month AND over budget
+                if (isMoreThanLastMonth && isOverBudget) return "#EF4444";
+                // Green: less than last month AND below budget
+                if (!isMoreThanLastMonth && !isOverBudget) return "#10B981";
+                // Orange: only one condition is true
+                return "#F97316";
+              })()
+            }}
+          >
+            {formatCurrency(totalSpentThisCycle / 100, currency)}
+          </Text>
+          <View className="flex-row items-center">
+            <Feather 
+              name={spendingComparison.isHigher ? "trending-up" : "trending-down"} 
+              size={14} 
+              color={spendingComparison.isHigher ? "#EF4444" : "#10B981"} 
+            />
+            <Text 
+              className="text-xs ml-1"
+              style={{ color: spendingComparison.isHigher ? "#EF4444" : "#10B981" }}
+            >
+              {spendingComparison.isHigher ? "+" : ""}{formatCurrency(Math.abs(spendingComparison.difference) / 100, currency)}
+              {" "}({spendingComparison.isHigher ? "+" : ""}{spendingComparison.percentageChange.toFixed(1)}%)
+            </Text>
+            <Text className="text-xs text-gray-500 ml-1">vs same period last month</Text>
+          </View>
+        </View>
+
         {/* Spending Over Time Chart - Full Width */}
         <SpendingOverTimeChart
-          transactions={transactions.filter((t) => !t.excludeFromAnalytics)}
+          transactions={analyticsTransactions}
           cycleType={cycleType}
           cycleDay={cycleDay}
           currency={summary?.currency}
+          monthlyBudget={budget}
           onDraggingChange={setIsDraggingChart}
           onDateSelected={setSelectedGraphDate}
         />
 
-        {/* Remaining Spend Card - Non-clickable */}
+        {/* Remaining Spend Card */}
         <View className="px-5 mt-5">
-          <View className={`rounded-3xl ${isOverspent ? "bg-red-600" : "bg-primary"} px-5 py-6 shadow-md`}>
-            <View className="flex-row items-center justify-between mb-1">
-              <Text className="text-white/80 text-sm">
-                {isOverspent ? "Overspent" : "Remaining Spend"}
-              </Text>
-              <Pressable 
-                onPress={() => router.push("/set-budget")}
-                className="p-2 rounded-full active:bg-white/20"
-              >
-                <Feather name="edit-2" size={18} color="white" />
-              </Pressable>
-            </View>
-            <Text className="text-white text-4xl font-bold mt-1">
-              {loading ? "…" : `${isOverspent ? "-" : ""}${formatCurrency(displayRemaining / 100, currency)}`}
-            </Text>
-            <View className="mt-4">
-              <View className="h-2 w-full rounded-full bg-white/20 overflow-hidden">
-                <View style={{ width: `${progress * 100}%` }} className={`h-2 ${isOverspent ? "bg-red-300" : "bg-white"} rounded-full`} />
-              </View>
-              <View className="flex-row justify-between mt-2">
-                <Text className="text-white/80 text-xs">Spent: {formatCurrency(cycleExpenses / 100, currency)}</Text>
-                <Text className="text-white/80 text-xs">Budget: {formatCurrency(budget / 100, currency)}</Text>
-              </View>
-            </View>
-          </View>
+          <RemainingSpendCard 
+            summary={summary}
+            transactions={analyticsTransactions}
+            loading={loading}
+            cycleType={cycleType}
+            cycleDay={cycleDay}
+            disableNavigation={true}
+          />
         </View>
 
         {/* Category Breakdown / Daily Transactions */}
@@ -251,7 +405,7 @@ export default function SpendAnalytics() {
                 {categoryStats.map((cat) => (
                   <Pressable
                     key={cat.id}
-                    onPress={() => router.push(`/transactions?filter=${cat.id}`)}
+                    onPress={() => router.push(`/category-transactions?categoryId=${cat.id}`)}
                     className="active:opacity-70"
                   >
                     <View className="flex-row items-center rounded-2xl bg-gray-50 px-4 py-4 border border-gray-100">
@@ -259,7 +413,7 @@ export default function SpendAnalytics() {
                         className="w-10 h-10 rounded-full items-center justify-center mr-3"
                         style={{ backgroundColor: cat.color || "#7C3AED" }}
                       >
-                        <Feather name="shopping-bag" size={18} color="white" />
+                        <Feather name={normalizeFeatherIconName(cat.icon as any, cat.name)} size={18} color="white" />
                       </View>
                       <View className="flex-1">
                         <Text className="font-semibold text-dark-100">{cat.name}</Text>

@@ -10,9 +10,51 @@ import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+// Map category names to default icons
+function getDefaultIcon(categoryName: string): string {
+  const name = (categoryName || '').toLowerCase();
+  const iconMap: Record<string, string> = {
+    food: 'coffee',
+    groceries: 'shopping-bag',
+    transport: 'navigation',
+    entertainment: 'play',
+    shopping: 'shopping-bag',
+    bills: 'file',
+    utilities: 'zap',
+    health: 'heart',
+    services: 'cloud',
+    sport: 'activity',
+    general: 'inbox',
+    income: 'trending-down',
+  };
+  return iconMap[name] || 'shopping-bag';
+}
+
+// Normalize potentially invalid icon names to valid Feather icons
+function normalizeFeatherIconName(icon: string | undefined, categoryName: string | undefined): string {
+  const raw = (icon || '').toLowerCase().trim();
+  const aliasMap: Record<string, string> = {
+    cart: 'shopping-bag',
+    'shopping-cart': 'shopping-bag',
+    flash: 'zap',
+    movie: 'play',
+    film: 'play',
+    bus: 'truck',
+    utensils: 'coffee',
+    'fork-knife': 'coffee',
+    'silverware-fork-knife': 'coffee',
+    'file-text': 'file',
+  };
+  const normalized = aliasMap[raw] || raw;
+  const validSet = new Set([
+    'shopping-bag','zap','play','truck','file','cloud','activity','heart','navigation','inbox','coffee','dollar-sign','credit-card','chevron-left','check-circle','x'
+  ]);
+  if (!normalized) return getDefaultIcon(categoryName || '');
+  return validSet.has(normalized) ? normalized : getDefaultIcon(categoryName || '');
+}
 export default function TransactionDetailScreen() {
   const { selectedTransactionId } = useTransactionDetailStore();
   const id = selectedTransactionId?.trim();
@@ -46,28 +88,21 @@ export default function TransactionDetailScreen() {
       setLoading(true);
       console.log("Loading transaction with ID:", id);
       
-      // First check if this transaction exists in the queue
-      const queuedTxs = await getQueuedTransactions(user.id);
-      const queuedTx = queuedTxs.find(t => t.id === id);
+      let dbTx: Transaction | null = null;
+      let isQueued = false;
       
-      if (queuedTx) {
-        // This is a queued transaction (not yet synced or currently syncing)
-        console.log("Loading from queue - transaction not yet synced");
-        setTransaction(queuedTx);
-        setEditedTitle(queuedTx.title);
-        setEditedAmount((queuedTx.amount / 100).toString());
-        setEditedExcludeFromAnalytics(queuedTx.excludeFromAnalytics ?? false);
-        setIsQueuedTransaction(true);
-        console.log("Loaded queued transaction:", queuedTx);
-      } else {
-        // Load from database (either never queued or already synced)
+      // Try to load from database first (takes precedence over queue)
+      try {
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID as string;
+        const transactionsTableId = (process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSACTIONS || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_TRANSACTIONS) as string;
+        if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
         const response = await databases.getDocument(
-          "budget_app_db",
-          "transactions",
+          databaseId,
+          transactionsTableId,
           id
         );
 
-        const tx: Transaction = {
+        dbTx = {
           id: response.$id,
           title: response.title,
           subtitle: response.subtitle,
@@ -77,13 +112,31 @@ export default function TransactionDetailScreen() {
           date: response.date,
           excludeFromAnalytics: response.excludeFromAnalytics ?? false,
         };
-
-        setTransaction(tx);
-        setEditedTitle(tx.title);
-        setEditedAmount((tx.amount / 100).toString());
-        setEditedExcludeFromAnalytics(tx.excludeFromAnalytics ?? false);
-        setIsQueuedTransaction(false);
-        console.log("Loaded database transaction:", tx);
+        
+        isQueued = false;
+        console.log("Loaded database transaction:", dbTx);
+      } catch (dbError) {
+        // Transaction not in database, check the queue
+        // Only consider transactions that are not yet completed (pending, syncing, or failed)
+        console.log("Transaction not in database, checking queue...");
+        const queuedTxs = await getQueuedTransactions();
+        const queuedTx = queuedTxs.find(t => t.id === id && t.syncStatus !== 'completed');
+        
+        if (queuedTx) {
+          dbTx = queuedTx;
+          isQueued = true;
+          console.log("Loaded queued transaction:", queuedTx);
+        } else {
+          throw new Error("Transaction not found in database or queue");
+        }
+      }
+      
+      if (dbTx) {
+        setTransaction(dbTx);
+        setEditedTitle(dbTx.title);
+        setEditedAmount((dbTx.amount / 100).toString());
+        setEditedExcludeFromAnalytics(dbTx.excludeFromAnalytics ?? false);
+        setIsQueuedTransaction(isQueued);
       }
     } catch (error) {
       console.error("Failed to load transaction:", error);
@@ -110,9 +163,11 @@ export default function TransactionDetailScreen() {
         await AsyncStorage.setItem("budget_app_sync_queue", JSON.stringify(updated));
       } else {
         // Update database transaction
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID as string;
+        const transactionsTableId = (process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSACTIONS || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_TRANSACTIONS) as string;
         await databases.updateDocument(
-          "budget_app_db",
-          "transactions",
+          databaseId,
+          transactionsTableId,
           id!,
           {
             title: editedTitle,
@@ -153,9 +208,11 @@ export default function TransactionDetailScreen() {
         await AsyncStorage.setItem("budget_app_sync_queue", JSON.stringify(updated));
       } else {
         // Delete database transaction
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID as string;
+        const transactionsTableId = (process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSACTIONS || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_TRANSACTIONS) as string;
         await databases.deleteDocument(
-          "budget_app_db",
-          "transactions",
+          databaseId,
+          transactionsTableId,
           id!
         );
       }
@@ -181,16 +238,18 @@ export default function TransactionDetailScreen() {
         await AsyncStorage.setItem("budget_app_sync_queue", JSON.stringify(updated));
       } else {
         // Update database transaction
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID as string;
+        const transactionsTableId = (process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSACTIONS || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_TRANSACTIONS) as string;
         await databases.updateDocument(
-          "budget_app_db",
-          "transactions",
+          databaseId,
+          transactionsTableId,
           id!,
           { categoryId: newCategoryId }
         );
       }
 
       // Learn this merchant-category mapping for future imports
-      await learnMerchantCategory(transaction.title, newCategoryId);
+      await learnMerchantCategory(transaction.title, newCategoryId, user?.id);
 
       // Update the transaction state
       setTransaction({
@@ -211,6 +270,16 @@ export default function TransactionDetailScreen() {
 
   const handleToggleExcludeFromAnalytics = async (newValue: boolean) => {
     if (!transaction || !user?.id) return;
+    
+    // Prevent toggling if analytics protection is enabled
+    if (transaction.isAnalyticsProtected) {
+      Alert.alert(
+        "Protected Transaction",
+        "This transaction is marked as a transfer and cannot be included in analytics.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
 
     try {
       setEditedExcludeFromAnalytics(newValue);
@@ -226,9 +295,11 @@ export default function TransactionDetailScreen() {
         await AsyncStorage.setItem("budget_app_sync_queue", JSON.stringify(updated));
       } else {
         // Update database transaction
+        const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID as string;
+        const transactionsTableId = (process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSACTIONS || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_TRANSACTIONS) as string;
         await databases.updateDocument(
-          "budget_app_db",
-          "transactions",
+          databaseId,
+          transactionsTableId,
           id!,
           { excludeFromAnalytics: newValue }
         );
@@ -349,7 +420,7 @@ export default function TransactionDetailScreen() {
                   className="w-10 h-10 rounded-full items-center justify-center"
                   style={{ backgroundColor: category?.color || "#7C3AED" }}
                 >
-                  <Feather name="shopping-bag" size={16} color="white" />
+                  <Feather name={normalizeFeatherIconName(category?.icon as any, category?.name)} size={16} color="white" />
                 </View>
                 <Text className="text-base font-semibold text-dark-100">
                   {category?.name || "Unknown"}
@@ -391,14 +462,35 @@ export default function TransactionDetailScreen() {
               {editedExcludeFromAnalytics
                 ? "This transaction won't appear in reports"
                 : "This transaction will appear in reports"}
+              {transaction?.isAnalyticsProtected && " (Transfer - protected)"}
             </Text>
           </View>
           <Switch
             value={editedExcludeFromAnalytics}
             onValueChange={handleToggleExcludeFromAnalytics}
+            disabled={transaction?.isAnalyticsProtected}
             trackColor={{ false: "#E5E7EB", true: "#7C3AED" }}
             thumbColor={editedExcludeFromAnalytics ? "#FFFFFF" : "#F3F4F6"}
           />
+        </View>
+
+        {/* Sync Status */}
+        <View className="mb-4">
+          <Text className="text-gray-500 text-sm mb-2">Sync Status</Text>
+          <View className="flex-row items-center gap-3">
+            <View
+              className="h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: isQueuedTransaction ? '#F97316' : '#10B981' }}
+            />
+            <Text className="text-base font-semibold text-dark-100">
+              {isQueuedTransaction ? 'Not synced (queued)' : 'Synced'}
+            </Text>
+          </View>
+          {isQueuedTransaction && (
+            <Text className="text-xs text-gray-500 mt-1">
+              This transaction is waiting to sync. Keep the app open or connected to send it.
+            </Text>
+          )}
         </View>
 
         {/* Transaction ID */}
@@ -458,7 +550,7 @@ export default function TransactionDetailScreen() {
         onRequestClose={() => setShowCategoryDropdown(false)}
       >
         <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white rounded-t-3xl max-h-2/3">
+          <View className="bg-white rounded-t-3xl" style={{ maxHeight: "70%" }}>
             {/* Header */}
             <View className="px-5 pt-4 pb-2 border-b border-gray-200 flex-row items-center justify-between">
               <Text className="text-lg font-bold text-dark-100">Select Category</Text>
@@ -472,7 +564,7 @@ export default function TransactionDetailScreen() {
 
             {/* Categories List */}
             <FlatList
-              data={categories.filter(cat => cat.id !== "all")}
+              data={categories.filter(cat => cat.id !== "all" && !cat.name?.toLowerCase().includes("transfer"))}
               keyExtractor={cat => cat.id}
               renderItem={({ item }) => (
                 <Pressable
@@ -485,7 +577,7 @@ export default function TransactionDetailScreen() {
                     className="w-10 h-10 rounded-full items-center justify-center"
                     style={{ backgroundColor: item.color || "#7C3AED" }}
                   >
-                    <Feather name="shopping-bag" size={16} color="white" />
+                    <Feather name={normalizeFeatherIconName(item.icon as any, item.name)} size={16} color="white" />
                   </View>
                   <View className="flex-1">
                     <Text className="text-base font-semibold text-dark-100">{item.name}</Text>

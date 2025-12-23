@@ -3,6 +3,7 @@ import { ID, Query } from 'appwrite';
 import * as Notifications from 'expo-notifications';
 import { AppState } from 'react-native';
 import { createBulkTransactions, databases } from './appwrite';
+import { getDeleteStatus } from './deleteQueue';
 import { captureException } from './sentry';
 
 export interface QueuedTransaction {
@@ -13,11 +14,14 @@ export interface QueuedTransaction {
   kind: 'income' | 'expense';
   date: string;
   categoryId: string;
+  currency: string;
   userId: string;
   syncStatus: 'pending' | 'syncing' | 'completed' | 'failed';
   attempts: number;
   error?: string;
   createdAt: string;
+  excludeFromAnalytics?: boolean;
+  isAnalyticsProtected?: boolean;
 }
 
 const SYNC_QUEUE_KEY = 'budget_app_sync_queue';
@@ -56,6 +60,7 @@ export async function queueTransactionsForSync(
     kind: 'income' | 'expense';
     date: string;
     categoryId: string;
+    currency: string;
   }[]
 ): Promise<QueuedTransaction[]> {
   try {
@@ -214,6 +219,18 @@ export async function startSyncingTransactions(
   onProgressUpdate?: (status: SyncStatus) => void
 ): Promise<{ succeeded: number; failed: number }> {
   try {
+    // If a delete operation is pending or in-progress, do not start sync
+    const initialDeleteStatus = await getDeleteStatus();
+    if (initialDeleteStatus && initialDeleteStatus.status !== 'completed') {
+      await AsyncStorage.setItem(SYNC_STATUS_KEY, JSON.stringify({
+        isSyncing: false,
+        progress: { current: 0, total: 0 },
+        failedCount: 0,
+      }));
+      onProgressUpdate?.({ isSyncing: false, progress: { current: 0, total: 0 }, failedCount: 0 });
+      return { succeeded: 0, failed: 0 };
+    }
+
     const queue = await getQueuedTransactions();
     const pendingTransactions = queue.filter(
       (t) => t.syncStatus === 'pending' || 
@@ -260,9 +277,38 @@ export async function startSyncingTransactions(
     let totalSucceeded = 0;
     let totalFailed = 0;
 
+    // Cancellation flag, set by polling delete status
+    let cancelSync = false;
+    const cancelPoll = setInterval(async () => {
+      try {
+        const del = await getDeleteStatus();
+        if (del && (del.status === 'in-progress' || del.status === 'pending')) {
+          cancelSync = true;
+        }
+      } catch {}
+    }, 500);
+
     // Process each user's transactions
     for (const [userId, userTransactions] of groupedByUser.entries()) {
       try {
+        // Interrupt sync if a delete has started
+        const currentDeleteStatus = await getDeleteStatus();
+        if (currentDeleteStatus && (currentDeleteStatus.status === 'in-progress' || currentDeleteStatus.status === 'pending')) {
+          // Reset syncing transactions back to pending
+          const q = await getQueuedTransactions();
+          const resetQueue = q.map((t) => t.syncStatus === 'syncing' ? { ...t, syncStatus: 'pending' as const } : t);
+          await AsyncStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(resetQueue));
+          const pausedStatus: SyncStatus = {
+            isSyncing: false,
+            progress: { current: totalSucceeded, total: pendingTransactions.length },
+            failedCount: totalFailed,
+          };
+          await AsyncStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(pausedStatus));
+          onProgressUpdate?.(pausedStatus);
+          clearInterval(cancelPoll);
+          return { succeeded: totalSucceeded, failed: totalFailed };
+        }
+
         // Check if app is still active before syncing
         if (AppState.currentState !== 'active') {
           // Send notification about paused sync
@@ -313,7 +359,7 @@ export async function startSyncingTransactions(
             await AsyncStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(syncStatus));
             onProgressUpdate?.(syncStatus);
           },
-          undefined, // shouldCancel
+          () => cancelSync, // shouldCancel
           async (batchSuccessIndices) => {
             // Mark these transactions as completed immediately after batch succeeds
             const queue = await getQueuedTransactions();
@@ -327,6 +373,22 @@ export async function startSyncingTransactions(
             await AsyncStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(updatedQueue));
           }
         );
+
+        // If we were cancelled mid-batch, stop further processing gracefully
+        if (cancelSync) {
+          const q = await getQueuedTransactions();
+          const resetQueue = q.map((t) => t.syncStatus === 'syncing' ? { ...t, syncStatus: 'pending' as const } : t);
+          await AsyncStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(resetQueue));
+          const pausedStatus: SyncStatus = {
+            isSyncing: false,
+            progress: { current: totalSucceeded, total: pendingTransactions.length },
+            failedCount: totalFailed,
+          };
+          await AsyncStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(pausedStatus));
+          onProgressUpdate?.(pausedStatus);
+          clearInterval(cancelPoll);
+          return { succeeded: totalSucceeded, failed: totalFailed };
+        }
 
         totalSucceeded += result.created;
         totalFailed += result.failed;
@@ -402,6 +464,9 @@ export async function startSyncingTransactions(
       }
     }
 
+    // Clean up completed transactions from the queue
+    await clearCompletedTransactions();
+
     // Update final status
     // Calculate how many are still pending/failed after sync
     const finalQueue = await getQueuedTransactions();
@@ -418,6 +483,7 @@ export async function startSyncingTransactions(
     };
     await AsyncStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(finalStatus));
     onProgressUpdate?.(finalStatus);
+    clearInterval(cancelPoll);
     return { succeeded: totalSucceeded, failed: totalFailed };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error during sync';

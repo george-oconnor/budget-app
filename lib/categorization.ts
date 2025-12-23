@@ -1,7 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getCategories } from './appwrite';
+import { ID, Query } from 'appwrite';
+import { databases, getCategories } from './appwrite';
 
 const MERCHANT_MAPPINGS_KEY = 'budget_app_merchant_categories';
+const databaseId = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
+const merchantVotesTableId = 
+  process.env.EXPO_PUBLIC_APPWRITE_TABLE_MERCHANT_VOTES ||
+  process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_MERCHANT_VOTES ||
+  'merchant_votes';
 
 // Learned merchant-to-category mappings
 interface MerchantMapping {
@@ -16,35 +22,138 @@ function getMerchantKey(title: string): string {
 }
 
 /**
- * Get learned merchant mappings from storage
+ * Get learned merchant mappings from database (crowd-sourced, most popular category wins)
  */
 async function getLearnedMappings(): Promise<MerchantMapping> {
   try {
-    const data = await AsyncStorage.getItem(MERCHANT_MAPPINGS_KEY);
-    return data ? JSON.parse(data) : {};
+    // Try to get from database first (crowd-sourced)
+    if (!databaseId || !merchantVotesTableId) {
+      // Fallback to AsyncStorage if database not configured
+      const data = await AsyncStorage.getItem(MERCHANT_MAPPINGS_KEY);
+      return data ? JSON.parse(data) : {};
+    }
+
+    const res = await databases.listDocuments(databaseId, merchantVotesTableId, []);
+    const mappings: MerchantMapping = {};
+
+    // Group votes by merchant and find the most popular category
+    const votesByMerchant = new Map<string, Map<string, number>>();
+    
+    res.documents.forEach((doc: any) => {
+      const merchantKey = doc.merchant_key;
+      const categoryId = doc.category_id;
+      
+      if (!votesByMerchant.has(merchantKey)) {
+        votesByMerchant.set(merchantKey, new Map());
+      }
+      const categoryVotes = votesByMerchant.get(merchantKey)!;
+      categoryVotes.set(categoryId, (categoryVotes.get(categoryId) || 0) + doc.votes);
+    });
+
+    // Pick the most voted category for each merchant
+    votesByMerchant.forEach((categoryVotes, merchantKey) => {
+      let topCategory = '';
+      let topVotes = 0;
+      categoryVotes.forEach((votes, categoryId) => {
+        if (votes > topVotes) {
+          topVotes = votes;
+          topCategory = categoryId;
+        }
+      });
+      if (topCategory) {
+        mappings[merchantKey] = topCategory;
+      }
+    });
+
+    return mappings;
   } catch (error) {
     console.error('Error loading merchant mappings:', error);
-    return {};
+    // Fallback to AsyncStorage
+    try {
+      const data = await AsyncStorage.getItem(MERCHANT_MAPPINGS_KEY);
+      return data ? JSON.parse(data) : {};
+    } catch {
+      return {};
+    }
   }
 }
 
 /**
- * Save a merchant-to-category mapping for future use
+ * Save a merchant-to-category mapping for future use (crowd-sourced learning)
  */
-export async function learnMerchantCategory(merchantName: string, categoryId: string): Promise<void> {
+export async function learnMerchantCategory(merchantName: string, categoryId: string, userId?: string): Promise<void> {
   try {
-    const mappings = await getLearnedMappings();
-    const key = getMerchantKey(merchantName);
-    mappings[key] = categoryId;
-    await AsyncStorage.setItem(MERCHANT_MAPPINGS_KEY, JSON.stringify(mappings));
+    const merchantKey = getMerchantKey(merchantName);
+    
+    // Save to database if configured (for crowd-sourcing)
+    if (databaseId && merchantVotesTableId) {
+      try {
+        // Check if this merchant-category vote already exists
+        const existing = await databases.listDocuments(databaseId, merchantVotesTableId, [
+          Query.equal('merchant_key', merchantKey),
+          Query.equal('category_id', categoryId),
+        ]);
+
+        if (existing.documents.length > 0) {
+          // Increment vote count
+          const doc = existing.documents[0] as any;
+          await databases.updateDocument(databaseId, merchantVotesTableId, doc.$id, {
+            votes: (doc.votes || 1) + 1,
+            last_voted: new Date().toISOString(),
+          });
+        } else {
+          // Create new vote record
+          await databases.createDocument(databaseId, merchantVotesTableId, ID.unique(), {
+            merchant_key: merchantKey,
+            merchant_name: merchantName,
+            category_id: categoryId,
+            votes: 1,
+            last_voted: new Date().toISOString(),
+            ...(userId && { user_id: userId }),
+          });
+        }
+      } catch (dbError) {
+        console.error('Error saving to merchant votes database:', dbError);
+        // Fallback to AsyncStorage
+        const mappings = await getLearnedMappings();
+        mappings[merchantKey] = categoryId;
+        await AsyncStorage.setItem(MERCHANT_MAPPINGS_KEY, JSON.stringify(mappings));
+      }
+    } else {
+      // Fallback to AsyncStorage if database not configured
+      const mappings = await getLearnedMappings();
+      mappings[merchantKey] = categoryId;
+      await AsyncStorage.setItem(MERCHANT_MAPPINGS_KEY, JSON.stringify(mappings));
+    }
   } catch (error) {
     console.error('Error saving merchant mapping:', error);
   }
 }
 
 /**
+ * Map category slug to Appwrite database ID
+ */
+async function getCategoryIdBySlug(slug: string): Promise<string> {
+  try {
+    const categories = await getCategories();
+    const category = categories.find(c => c.slug === slug || c.name.toLowerCase() === slug);
+    
+    if (category) {
+      return category.$id;
+    }
+    
+    // Fallback: try to find General category
+    const general = categories.find(c => c.slug === 'general' || c.name.toLowerCase() === 'general');
+    return general ? general.$id : '';
+  } catch (error) {
+    console.error('Error mapping category slug:', error);
+    return '';
+  }
+}
+
+/**
  * Keyword-based category matching rules
- * Returns categoryId or null if no match
+ * Returns category slug or null if no match
  */
 function matchKeywordRules(description: string, isExpense: boolean): string | null {
   const desc = description.toLowerCase();
@@ -189,13 +298,14 @@ function matchKeywordRules(description: string, isExpense: boolean): string | nu
 /**
  * Categorize a transaction based on its title/description
  * Uses learned mappings first, then keyword rules, finally falls back to uncategorized
+ * Returns the Appwrite database ID for the category
  */
 export async function categorizeTransaction(
   title: string,
   description: string,
   isExpense: boolean
 ): Promise<string> {
-  // 1. Check learned merchant mappings
+  // 1. Check learned merchant mappings (these already store Appwrite IDs)
   const merchantKey = getMerchantKey(title);
   const learnedMappings = await getLearnedMappings();
   
@@ -208,31 +318,55 @@ export async function categorizeTransaction(
   const keywordMatch = matchKeywordRules(combinedText, isExpense);
   
   if (keywordMatch) {
-    return keywordMatch;
+    // Map the slug to the actual database ID
+    return await getCategoryIdBySlug(keywordMatch);
   }
 
-  // 3. Fall back to uncategorized
-  return 'uncategorized';
+  // 3. Fall back to General category for imports
+  return await getCategoryIdBySlug('general');
 }
 
 /**
  * Get or create the "uncategorized" category
  * This ensures we always have a fallback category
+ * Returns the Appwrite database ID for the uncategorized category
  */
 export async function ensureUncategorizedCategory(): Promise<string> {
   try {
     const categories = await getCategories();
-    const uncategorized = categories.find(c => c.id === 'uncategorized' || c.name.toLowerCase() === 'uncategorized');
+    const uncategorized = categories.find(c => c.slug === 'uncategorized' || c.name.toLowerCase() === 'uncategorized');
     
     if (uncategorized) {
-      return uncategorized.id;
+      return uncategorized.$id;
     }
     
-    // If no uncategorized category exists, return 'uncategorized' 
-    // (it should be created in the database)
-    return 'uncategorized';
+    // If no uncategorized category exists, log a warning and return first category or empty string
+    console.warn('No uncategorized category found in database');
+    return categories.length > 0 ? categories[0].$id : '';
   } catch (error) {
     console.error('Error checking for uncategorized category:', error);
-    return 'uncategorized';
+    return '';
+  }
+}
+
+/**
+ * Get the "Transfer" category for account transfers
+ * Returns the Appwrite database ID for the transfer category
+ */
+export async function getTransferCategoryId(): Promise<string> {
+  try {
+    const categories = await getCategories();
+    const transfer = categories.find(c => c.slug === 'transfer' || c.name.toLowerCase() === 'transfer');
+    
+    if (transfer) {
+      return transfer.$id;
+    }
+    
+    // Fall back to general category if no transfer category exists
+    console.warn('No transfer category found, using general category');
+    return await getCategoryIdBySlug('general');
+  } catch (error) {
+    console.error('Error getting transfer category:', error);
+    return await getCategoryIdBySlug('general');
   }
 }

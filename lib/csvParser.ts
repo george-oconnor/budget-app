@@ -1,9 +1,11 @@
 // Revolut CSV format parser
-// Expected columns: Started Date,Completed Date,Description,Payer,Payee,Amount,Fee,Currency,State,Balance
+// Expected columns: Type, Product, Started Date, Completed Date, Description, Amount, Fee, Currency, State, Balance
 
-import { categorizeTransaction } from './categorization';
+import { categorizeTransaction, getTransferCategoryId } from './categorization';
 
 export interface RevolutTransaction {
+  type: string; // e.g., "Transfer", "Card Payment", "Topup"
+  product: string; // e.g., "Current", "Pocket", "Savings"
   startedDate: string;
   completedDate: string;
   description: string;
@@ -20,45 +22,47 @@ export interface ParsedTransaction {
   title: string;
   subtitle: string;
   amount: number; // in cents, negative for expenses, positive for income
-  kind: "income" | "expense";
+  kind: 'income' | 'expense';
   date: string; // ISO format
-  categoryId: string; // default category
+  categoryId: string;
+  currency: string; // e.g., 'EUR', 'GBP', 'USD'
+  excludeFromAnalytics?: boolean;
+  isAnalyticsProtected?: boolean; // When true, user cannot toggle excludeFromAnalytics
 }
 
 export type SkippedRow = { line: number; reason: string };
 
 export type RevolutParseResult = {
   transactions: RevolutTransaction[];
-  skipped: number; // rows skipped due to invalid structure
-  totalRows: number; // data rows (excluding header)
+  skipped: number;
+  totalRows: number;
   skippedDetails: SkippedRow[];
 };
 
 export function parseRevolutCSV(csvContent: string): RevolutParseResult {
-  const rawLines = csvContent.split("\n");
-  // Preserve empty trailing lines in counts but ignore them for parsing
-  const lines = rawLines.map((l) => l.replace(/\r$/, ""));
-  
+  const rawLines = csvContent.split('\n');
+  const lines = rawLines.map(l => l.replace(/\r$/, ''));
+
   if (lines.length < 2) {
-    throw new Error("CSV file is empty or invalid");
+    throw new Error('CSV file is empty or invalid');
   }
 
-  // Parse header to get column indices
   const headerFields = parseCSVLine(lines[0]);
   const columnMap = new Map<string, number>();
   headerFields.forEach((header, index) => {
     columnMap.set(header.trim().toLowerCase(), index);
   });
 
-  // Find required columns
   const getColumnIndex = (names: string[]): number => {
     for (const name of names) {
-      const index = columnMap.get(name.toLowerCase());
-      if (index !== undefined) return index;
+      const idx = columnMap.get(name.toLowerCase());
+      if (idx !== undefined) return idx;
     }
     return -1;
   };
 
+  const typeIdx = getColumnIndex(['type']);
+  const productIdx = getColumnIndex(['product']);
   const startedDateIdx = getColumnIndex(['started date', 'started', 'date']);
   const completedDateIdx = getColumnIndex(['completed date', 'completed']);
   const descriptionIdx = getColumnIndex(['description', 'desc']);
@@ -72,37 +76,35 @@ export function parseRevolutCSV(csvContent: string): RevolutParseResult {
     throw new Error("CSV must contain 'Amount' column");
   }
 
-  // Parse data lines
   const transactions: RevolutTransaction[] = [];
   let skipped = 0;
   const skippedDetails: SkippedRow[] = [];
-  
+
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) {
       skipped++;
-      skippedDetails.push({ line: i + 1, reason: "Empty line" });
-      continue; // Skip empty lines but count them
+      skippedDetails.push({ line: i + 1, reason: 'Empty line' });
+      continue;
     }
 
-    // Parse CSV line (handle quoted fields)
     const fields = parseCSVLine(line);
-    
     if (fields.length < 3) {
-      console.warn(`Skipping invalid line ${i + 1}: not enough fields`);
       skipped++;
-      skippedDetails.push({ line: i + 1, reason: "Not enough columns" });
+      skippedDetails.push({ line: i + 1, reason: 'Not enough columns' });
       continue;
     }
 
     try {
+      const type = typeIdx >= 0 ? fields[typeIdx]?.trim() || '' : '';
+      const product = productIdx >= 0 ? fields[productIdx]?.trim() || '' : '';
       const startedDate = startedDateIdx >= 0 ? fields[startedDateIdx]?.trim() || '' : '';
       const completedDate = completedDateIdx >= 0 ? fields[completedDateIdx]?.trim() || '' : '';
       const description = descriptionIdx >= 0 ? fields[descriptionIdx]?.trim() || '' : '';
       const amount = amountIdx >= 0 ? parseFloat(fields[amountIdx]?.trim() || '0') : 0;
       if (Number.isNaN(amount)) {
         skipped++;
-        skippedDetails.push({ line: i + 1, reason: "Invalid amount" });
+        skippedDetails.push({ line: i + 1, reason: 'Invalid amount' });
         continue;
       }
       const fee = feeIdx >= 0 ? parseFloat(fields[feeIdx]?.trim() || '0') : 0;
@@ -111,11 +113,13 @@ export function parseRevolutCSV(csvContent: string): RevolutParseResult {
       const balance = balanceIdx >= 0 ? fields[balanceIdx]?.trim() || '' : '';
 
       transactions.push({
+        type,
+        product,
         startedDate,
         completedDate,
         description,
-        payer: '', // Not always in Revolut CSV
-        payee: '', // Not always in Revolut CSV
+        payer: '',
+        payee: '',
         amount,
         fee,
         currency,
@@ -123,73 +127,57 @@ export function parseRevolutCSV(csvContent: string): RevolutParseResult {
         balance,
       });
     } catch (e) {
-      console.warn(`Error parsing line ${i + 1}:`, e);
       skipped++;
-      skippedDetails.push({ line: i + 1, reason: "Parse error" });
+      skippedDetails.push({ line: i + 1, reason: 'Parse error' });
       continue;
     }
   }
 
-  const totalRows = Math.max(0, lines.length - 1); // exclude header
+  const totalRows = Math.max(0, lines.length - 1);
   return { transactions, skipped, totalRows, skippedDetails };
 }
 
 export async function convertRevolutToAppTransaction(
   revolut: RevolutTransaction
 ): Promise<ParsedTransaction> {
-  // Determine if income or expense based on amount
   const isExpense = revolut.amount < 0;
-  const absoluteAmount = Math.abs(revolut.amount);
-  const amountInCents = Math.round(absoluteAmount * 100);
+  const amountInCents = Math.round(Math.abs(revolut.amount) * 100);
 
-  // Use completed date, fallback to started date
-  const dateStr = revolut.completedDate || revolut.startedDate;
-  let date: Date;
-  
-  try {
-    // Try parsing the date string
-    date = new Date(dateStr);
-    
-    // Check if date is valid
-    if (isNaN(date.getTime())) {
-      console.warn(`Invalid date for transaction: ${dateStr}, using current date`);
-      date = new Date();
-    }
-  } catch (e) {
-    console.warn(`Error parsing date: ${dateStr}, using current date`);
-    date = new Date();
+  // Prefer Started Date, normalize "YYYY-MM-DD HH:mm:ss" to ISO-like local time
+  const primaryStr = revolut.startedDate || '';
+  const fallbackStr = revolut.completedDate || '';
+  const normalizedPrimary = primaryStr ? primaryStr.replace(' ', 'T') : '';
+  const normalizedFallback = fallbackStr ? fallbackStr.replace(' ', 'T') : '';
+
+  let date = normalizedPrimary ? new Date(normalizedPrimary) : new Date(NaN);
+  if (isNaN(date.getTime())) {
+    date = normalizedFallback ? new Date(normalizedFallback) : new Date();
   }
-  
-  // Determine title and subtitle
+
   let title = revolut.description;
   let subtitle = isExpense ? revolut.payee : revolut.payer;
 
-  // If description is empty, use payee/payer
-  if (!title || title.toLowerCase() === "transfer") {
+  if (!title || title.toLowerCase() === 'transfer') {
     title = isExpense ? revolut.payee : revolut.payer;
-    subtitle = revolut.description || (isExpense ? "Expense" : "Income");
+    subtitle = revolut.description || (isExpense ? 'Expense' : 'Income');
   }
 
-  // Auto-categorize using the smart categorization system
-  const categoryId = await categorizeTransaction(
-    title || "",
-    subtitle || "",
-    isExpense
-  );
+  const categoryId = await categorizeTransaction(title || '', subtitle || '', isExpense);
 
   return {
-    title: title || (isExpense ? "Expense" : "Income"),
-    subtitle: subtitle || revolut.description || "",
-    amount: amountInCents, // Always positive, kind field indicates income/expense
-    kind: isExpense ? "expense" : "income",
+    title: title || (isExpense ? 'Expense' : 'Income'),
+    subtitle: subtitle || revolut.description || '',
+    amount: amountInCents,
+    kind: isExpense ? 'expense' : 'income',
     date: date.toISOString(),
     categoryId,
+    currency: revolut.currency || 'EUR',
   };
 }
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];
-  let current = "";
+  let current = '';
   let insideQuotes = false;
 
   for (let i = 0; i < line.length; i++) {
@@ -198,24 +186,101 @@ function parseCSVLine(line: string): string[] {
 
     if (char === '"') {
       if (insideQuotes && nextChar === '"') {
-        // Escaped quote
         current += '"';
         i++;
       } else {
-        // Toggle quote mode
         insideQuotes = !insideQuotes;
       }
-    } else if (char === "," && !insideQuotes) {
-      // Field separator
+    } else if (char === ',' && !insideQuotes) {
       result.push(current);
-      current = "";
+      current = '';
     } else {
       current += char;
     }
   }
 
-  // Push the last field
   result.push(current);
-
   return result;
+}
+
+/**
+ * Detect transfer pairs: transactions with matching amounts on the same date
+ * Returns a Set of transaction indices that are part of transfer pairs
+ * 
+ * A transfer pair consists of:
+ * - Two transactions on the same date (or within 1 day)
+ * - Same absolute amount
+ * - One income and one expense
+ * - Same currency
+ */
+export function detectTransferPairs(transactions: ParsedTransaction[]): Set<number> {
+  const transferIndices = new Set<number>();
+  
+  // Create a map of potential matches: date_amount_currency -> indices
+  const potentialMatches = new Map<string, number[]>();
+  
+  transactions.forEach((tx, index) => {
+    const dateObj = new Date(tx.date);
+    const dateKey = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
+    const key = `${dateKey}_${tx.amount}_${tx.currency}`;
+    
+    if (!potentialMatches.has(key)) {
+      potentialMatches.set(key, []);
+    }
+    potentialMatches.get(key)!.push(index);
+  });
+  
+  // Check each group for income/expense pairs
+  potentialMatches.forEach((indices) => {
+    if (indices.length < 2) return;
+    
+    // Find all income/expense pairs in this group
+    for (let i = 0; i < indices.length; i++) {
+      for (let j = i + 1; j < indices.length; j++) {
+        const tx1 = transactions[indices[i]];
+        const tx2 = transactions[indices[j]];
+        
+        // Check if one is income and one is expense
+        if (tx1.kind !== tx2.kind) {
+          // Check if dates are within 1 day of each other
+          const date1 = new Date(tx1.date).getTime();
+          const date2 = new Date(tx2.date).getTime();
+          const daysDiff = Math.abs(date1 - date2) / (1000 * 60 * 60 * 24);
+          
+          if (daysDiff <= 1) {
+            transferIndices.add(indices[i]);
+            transferIndices.add(indices[j]);
+          }
+        }
+      }
+    }
+  });
+  
+  return transferIndices;
+}
+
+/**
+ * Mark transfer transactions with special category and analytics protection
+ * This should be called after parsing but before saving transactions
+ */
+export async function markTransfers(transactions: ParsedTransaction[]): Promise<ParsedTransaction[]> {
+  const transferIndices = detectTransferPairs(transactions);
+  
+  if (transferIndices.size === 0) {
+    return transactions;
+  }
+  
+  const transferCategoryId = await getTransferCategoryId();
+  
+  return transactions.map((tx, index) => {
+    if (transferIndices.has(index)) {
+      return {
+        ...tx,
+        categoryId: transferCategoryId,
+        excludeFromAnalytics: true,
+        isAnalyticsProtected: true,
+      };
+    }
+    return tx;
+  });
 }

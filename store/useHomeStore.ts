@@ -4,6 +4,7 @@ import {
     getTransactionsForMonth,
     getTransactionsInRange,
 } from "@/lib/appwrite";
+import { getTransactionsInCurrentCycle } from "@/lib/budgetCycle";
 import { captureException } from "@/lib/sentry";
 import { getQueuedTransactions } from "@/lib/syncQueue";
 import type { Category, Summary, Transaction } from "@/types/type";
@@ -123,31 +124,14 @@ export const useHomeStore = create<HomeState>((set) => ({
 
       // Filter queued transactions for this user
       const userQueuedTxs = queuedTxs.filter(t => t.userId === userId);
+      // Only consider active (not completed) queue items for calculations
+      const activeQueuedTxs = userQueuedTxs.filter(t => t.syncStatus !== 'completed');
 
       const income = monthTxDocs
         .filter((t) => t.kind === "income" && !(t as any).excludeFromAnalytics)
         .reduce((s, t) => s + Math.abs(t.amount), 0);
-      const expenses = monthTxDocs
-        .filter((t) => t.kind === "expense" && !(t as any).excludeFromAnalytics)
-        .reduce((s, t) => s + Math.abs(t.amount), 0);
-
-      // Include queued transactions in summary calculations
-      const queuedIncome = userQueuedTxs
-        .filter((t) => t.kind === "income" && new Date(t.date).getUTCMonth() === now.getUTCMonth() && !t.excludeFromAnalytics)
-        .reduce((s, t) => s + Math.abs(t.amount), 0);
-      const queuedExpenses = userQueuedTxs
-        .filter((t) => t.kind === "expense" && new Date(t.date).getUTCMonth() === now.getUTCMonth() && !t.excludeFromAnalytics)
-        .reduce((s, t) => s + Math.abs(t.amount), 0);
-
-      const summary: Summary = {
-        balance: (income + queuedIncome) - (expenses + queuedExpenses),
-        income: income + queuedIncome,
-        expenses: expenses + queuedExpenses,
-        currency: budgetDoc.currency || "USD",
-        monthlyBudget: budgetDoc.monthlyBudget || 0,
-      };
-
-      // Map TransactionDoc -> Transaction
+      // Note: Summary should reflect current budget cycle, not calendar month.
+      // We'll compute income/expenses from combined transactions for the current cycle
       const transactions: Transaction[] = allTxDocs.map((t) => ({
         id: (t as any).$id ?? `${t.userId}-${t.date}`,
         title: t.title,
@@ -156,11 +140,12 @@ export const useHomeStore = create<HomeState>((set) => ({
         categoryId: t.categoryId,
         kind: t.kind,
         date: t.date,
+        currency: (t as any).currency,
         excludeFromAnalytics: (t as any).excludeFromAnalytics,
       }));
 
-      // Add queued transactions to the list
-      const queuedTransactions: Transaction[] = userQueuedTxs.map((t) => ({
+      // Add queued transactions to the list (exclude completed)
+      const queuedTransactions: Transaction[] = activeQueuedTxs.map((t) => ({
         id: t.id,
         title: t.title,
         subtitle: t.subtitle,
@@ -168,11 +153,19 @@ export const useHomeStore = create<HomeState>((set) => ({
         categoryId: t.categoryId,
         kind: t.kind,
         date: t.date,
+        currency: t.currency,
         excludeFromAnalytics: t.excludeFromAnalytics,
       }));
 
+      // Filter out queued transactions that already exist in the database
+      // (happens when they've been synced but not yet removed from queue)
+      const dbTransactionIds = new Set(transactions.map(t => t.id));
+      const uniqueQueuedTransactions = queuedTransactions.filter(
+        t => !dbTransactionIds.has(t.id)
+      );
+
       // Combine and sort by date (most recent first)
-      const allTransactions = [...transactions, ...queuedTransactions].sort(
+      const allTransactions = [...transactions, ...uniqueQueuedTransactions].sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
       );
 
@@ -189,6 +182,27 @@ export const useHomeStore = create<HomeState>((set) => ({
         { id: "all", name: "All", color: "#2F9B65" },
         ...(categories.length ? categories : mockCategories.slice(1)), // Exclude mock "All" if using real categories
       ];
+
+      // Compute cycle-based income/expenses for summary
+      const cycleTransactions = getTransactionsInCurrentCycle(
+        allTransactions,
+        (budgetDoc.cycleType as any) || "first_working_day",
+        budgetDoc.cycleDay
+      );
+      const cycleIncome = cycleTransactions
+        .filter((t) => t.kind === "income" && !t.excludeFromAnalytics)
+        .reduce((s, t) => s + Math.abs(t.amount), 0);
+      const cycleExpenses = cycleTransactions
+        .filter((t) => t.kind === "expense" && !t.excludeFromAnalytics)
+        .reduce((s, t) => s + Math.abs(t.amount), 0);
+
+      const summary: Summary = {
+        balance: cycleIncome - cycleExpenses,
+        income: cycleIncome,
+        expenses: cycleExpenses,
+        currency: budgetDoc.currency || "USD",
+        monthlyBudget: budgetDoc.monthlyBudget || 0,
+      };
 
       set({
         summary,

@@ -10,6 +10,7 @@ interface SpendingOverTimeChartProps {
   cycleType?: "first_working_day" | "last_working_day" | "specific_date" | "last_friday";
   cycleDay?: number;
   currency?: string;
+  monthlyBudget?: number;
   onDraggingChange?: (isDragging: boolean) => void;
   onDateSelected?: (date: string | null) => void;
 }
@@ -19,6 +20,7 @@ export default function SpendingOverTimeChart({
   cycleType = "first_working_day",
   cycleDay,
   currency = "USD",
+  monthlyBudget = 0,
   onDraggingChange,
   onDateSelected,
 }: SpendingOverTimeChartProps) {
@@ -192,6 +194,11 @@ export default function SpendingOverTimeChart({
 
   const { points, prevPoints, maxAmount } = chartData;
 
+  // Calculate Y position for budget line
+  const budgetY = monthlyBudget > 0 
+    ? padding.top + chartInnerHeight - (monthlyBudget / (maxAmount || 1)) * chartInnerHeight
+    : null;
+
   // Create path for line
   const linePath = points
     .map((p, i) => `${i === 0 ? "M" : "L"} ${padding.left + p.x} ${padding.top + p.y}`)
@@ -303,6 +310,20 @@ export default function SpendingOverTimeChart({
             strokeLinejoin="round"
           />
 
+          {/* Budget line */}
+          {budgetY !== null && (
+            <Line
+              x1={padding.left}
+              y1={budgetY}
+              x2={padding.left + chartWidth}
+              y2={budgetY}
+              stroke="#EF4444"
+              strokeWidth="2"
+              strokeDasharray="4,4"
+              opacity={0.6}
+            />
+          )}
+
           {/* Previous cycle line */}
           <Path
             d={prevLinePath}
@@ -312,7 +333,6 @@ export default function SpendingOverTimeChart({
             strokeLinecap="round"
             strokeLinejoin="round"
             opacity={0.4}
-            strokeDasharray="5,5"
           />
 
           {/* Data points */}

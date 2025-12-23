@@ -100,6 +100,94 @@ export function getCycleEndDate(): Date {
 }
 
 /**
+ * Calculate when the next budget cycle starts (the actual end date of the current cycle)
+ */
+export function getNextCycleStartDate(
+  cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday" = "first_working_day",
+  cycleDay?: number
+): Date {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+
+  let nextCycleStart: Date;
+
+  switch (cycleType) {
+    case "first_working_day": {
+      // Next cycle starts on first working day of next month
+      nextCycleStart = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0));
+      while (nextCycleStart.getUTCDay() === 0 || nextCycleStart.getUTCDay() === 6) {
+        nextCycleStart.setUTCDate(nextCycleStart.getUTCDate() + 1);
+      }
+      break;
+    }
+
+    case "last_working_day": {
+      // Next cycle starts on last working day of current month
+      nextCycleStart = new Date(Date.UTC(year, month + 1, 0, 0, 0, 0)); // Last day of current month
+      while (nextCycleStart.getUTCDay() === 0 || nextCycleStart.getUTCDay() === 6) {
+        nextCycleStart.setUTCDate(nextCycleStart.getUTCDate() - 1);
+      }
+      // If we've already passed this date, use next month
+      if (now >= nextCycleStart) {
+        nextCycleStart = new Date(Date.UTC(year, month + 2, 0, 0, 0, 0));
+        while (nextCycleStart.getUTCDay() === 0 || nextCycleStart.getUTCDay() === 6) {
+          nextCycleStart.setUTCDate(nextCycleStart.getUTCDate() - 1);
+        }
+      }
+      break;
+    }
+
+    case "specific_date": {
+      const day = cycleDay ?? 1;
+      nextCycleStart = new Date(Date.UTC(year, month, day, 0, 0, 0));
+      // If this date has passed, use next month
+      if (now >= nextCycleStart) {
+        nextCycleStart = new Date(Date.UTC(year, month + 1, day, 0, 0, 0));
+      }
+      break;
+    }
+
+    case "last_friday": {
+      // Find next last Friday
+      let lastDay = new Date(Date.UTC(year, month + 1, 0, 0, 0, 0));
+      while (lastDay.getUTCDay() !== 5) {
+        lastDay.setUTCDate(lastDay.getUTCDate() - 1);
+      }
+      nextCycleStart = lastDay;
+      // If we've passed this Friday, get next month's last Friday
+      if (now >= nextCycleStart) {
+        lastDay = new Date(Date.UTC(year, month + 2, 0, 0, 0, 0));
+        while (lastDay.getUTCDay() !== 5) {
+          lastDay.setUTCDate(lastDay.getUTCDate() - 1);
+        }
+        nextCycleStart = lastDay;
+      }
+      break;
+    }
+
+    default:
+      throw new Error(`Unknown cycle type: ${cycleType}`);
+  }
+
+  return nextCycleStart;
+}
+
+/**
+ * Calculate the number of days remaining in the current budget cycle
+ */
+export function getDaysRemainingInCycle(
+  cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday" = "first_working_day",
+  cycleDay?: number
+): number {
+  const now = new Date();
+  const nextCycleStart = getNextCycleStartDate(cycleType, cycleDay);
+  const diffMs = nextCycleStart.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+}
+
+/**
  * Filter transactions that fall within the current budget cycle
  * @param transactions - Array of all transactions
  * @param cycleType - The type of budget cycle

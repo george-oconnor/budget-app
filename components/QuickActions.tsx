@@ -17,6 +17,9 @@ export default function QuickActions({ actions }: { actions: QuickAction[] }) {
         // TODO: Navigate to analytics/stats screen
         console.log("View analytics");
         break;
+      case "balances":
+        router.push("/balances");
+        break;
       default:
         break;
     }

@@ -13,7 +13,9 @@ export type Transaction = {
   categoryId: string;
   kind: "income" | "expense";
   date: string;
+  currency?: string; // e.g., 'EUR', 'GBP', 'USD'
   excludeFromAnalytics?: boolean;
+  isAnalyticsProtected?: boolean; // When true, excludeFromAnalytics cannot be toggled by user
 };
 
 export type Summary = {

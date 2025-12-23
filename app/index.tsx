@@ -1,3 +1,4 @@
+import AccountBalanceCard from "@/components/AccountBalanceCard";
 import Header from "@/components/Header";
 import IncomeExpenseRow from "@/components/IncomeExpenseRow";
 import QuickActions from "@/components/QuickActions";
@@ -30,6 +31,7 @@ export default function Index() {
 
   const { user } = useSessionStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     // Only fetch when user is available
@@ -42,6 +44,8 @@ export default function Index() {
     setRefreshing(true);
     try {
       await fetchHome();
+      // Trigger account balance card refresh
+      setRefreshTrigger(prev => prev + 1);
     } finally {
       setRefreshing(false);
     }
@@ -70,8 +74,9 @@ export default function Index() {
           cycleDay={cycleDay}
         />
         <IncomeExpenseRow summary={summary} loading={loading} />
+        <AccountBalanceCard refreshTrigger={refreshTrigger} />
         <QuickActions actions={quickActions} />
-        <TransactionsSection transactions={transactions} categories={categories} currency={summary?.currency ?? "USD"} loading={loading} />
+        <TransactionsSection transactions={transactions} categories={categories} currency={summary?.currency ?? "EUR"} loading={loading} />
       </ScrollView>
     </SafeAreaView>
   );

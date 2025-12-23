@@ -14,7 +14,7 @@ const IMPORT_OPTIONS = [
   {
     id: "csv",
     name: "CSV File",
-    icon: "file-text",
+    icon: "file",
     description: "Import from a CSV file",
     color: "#10B981",
     comingSoon: true,

@@ -70,6 +70,7 @@ export default function Header({
   });
 
   const hasPendingSync = syncStatus?.isSyncing || pendingCount > 0 || (deleteStatus && deleteStatus.status !== 'completed');
+  const hasSyncActivity = syncStatus?.isSyncing || pendingCount > 0; // exclude delete-only from showing sync item
   const isActiveOperation = syncStatus?.isSyncing || deleteStatus?.status === 'in-progress';
 
   return (
@@ -119,7 +120,7 @@ export default function Header({
               </View>
 
               {/* Sync Status */}
-              {syncStatus && hasPendingSync ? (
+              {syncStatus && hasSyncActivity ? (
                 <>
                   {/* Delete Status */}
                   {deleteStatus && deleteStatus.status !== 'completed' && (
@@ -168,7 +169,7 @@ export default function Header({
                     </View>
                   )}
 
-                  {/* Sync Upload Status */}
+                  {/* Sync Upload Status (only when actual sync is pending or running) */}
                   <View className="px-4 py-4 border-b border-gray-100">
                     <View className="flex-row items-center gap-3">
                       {syncStatus.isSyncing ? (

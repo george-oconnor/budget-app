@@ -1,4 +1,5 @@
 import { getAllTransactionsForUser } from "@/lib/appwrite";
+import { detectTransferPairs, markTransfers } from "@/lib/csvParser";
 import { queueTransactionsForSync } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
@@ -23,6 +24,9 @@ interface Transaction {
   kind: "income" | "expense";
   date: string;
   categoryId: string;
+  currency: string;
+  excludeFromAnalytics?: boolean;
+  isAnalyticsProtected?: boolean;
 }
 
 // Helpers for robust deduping (normalize text, amount, and date to a stable key)
@@ -130,7 +134,7 @@ export default function ImportPreviewScreen() {
     try {
       console.log(`Starting local import of ${transactions.length} transactions`);
 
-      // Fetch existing transactions to dedupe
+      // Fetch existing transactions to dedupe and detect transfers
       const existing = await getAllTransactionsForUser(user.id);
       const existingKeys = new Set(existing.map(makeKeyFromDoc));
 
@@ -142,21 +146,63 @@ export default function ImportPreviewScreen() {
         deduped.push(t);
       }
 
-      const skipped = transactions.length - deduped.length;
+      // Detect transfers between new transactions and existing transactions
+      // Combine both sets to detect cross-set transfers
+      const existingAsTransactions: Transaction[] = existing.map((doc: any) => ({
+        title: doc.title || '',
+        subtitle: doc.subtitle || '',
+        amount: Math.abs(Number(doc.amount)),
+        kind: doc.kind,
+        date: doc.date || '',
+        categoryId: doc.categoryId || '',
+        currency: doc.currency || 'EUR',
+        excludeFromAnalytics: doc.excludeFromAnalytics,
+        isAnalyticsProtected: doc.isAnalyticsProtected,
+      }));
+      
+      const combinedForDetection = [...existingAsTransactions, ...deduped];
+      const transferIndicesInCombined = detectTransferPairs(combinedForDetection);
+      
+      // Determine which new transactions are transfers
+      const existingCount = existingAsTransactions.length;
+      const transferIndicesInNew = new Set<number>();
+      transferIndicesInCombined.forEach(idx => {
+        if (idx >= existingCount) {
+          transferIndicesInNew.add(idx - existingCount);
+        }
+      });
+      
+      // Mark the new transactions that are transfers
+      const dedupedWithTransfers = await markTransfers(deduped);
+      
+      // Override with detected transfers from cross-checking
+      const finalTransactions = dedupedWithTransfers.map((tx, idx) => {
+        if (transferIndicesInNew.has(idx) && !tx.isAnalyticsProtected) {
+          // This transaction pairs with an existing one
+          return {
+            ...tx,
+            excludeFromAnalytics: true,
+            isAnalyticsProtected: true,
+          };
+        }
+        return tx;
+      });
+
+      const skipped = transactions.length - finalTransactions.length;
       setSkippedCount(skipped);
-      setUniqueCount(deduped.length);
-      setImportProgress({ current: 0, total: deduped.length });
+      setUniqueCount(finalTransactions.length);
+      setImportProgress({ current: 0, total: finalTransactions.length });
 
       // Queue transactions locally instead of uploading immediately
-      await queueTransactionsForSync(user.id, deduped);
+      await queueTransactionsForSync(user.id, finalTransactions);
 
-      console.log(`Queued ${deduped.length} transactions for sync`);
+      console.log(`Queued ${finalTransactions.length} transactions for sync`);
 
-      setImportProgress({ current: deduped.length, total: deduped.length });
+      setImportProgress({ current: finalTransactions.length, total: finalTransactions.length });
 
       Alert.alert(
         "Import Queued",
-        `Added ${deduped.length} transactions to your queue.${skipped > 0 ? `\nSkipped ${skipped} duplicate(s).` : ""}\n\nThey will sync to your account shortly.`,
+        `Added ${finalTransactions.length} transactions to your queue.${skipped > 0 ? `\nSkipped ${skipped} duplicate(s).` : ""}\n\nThey will sync to your account shortly.`,
         [
           {
             text: "View Home",

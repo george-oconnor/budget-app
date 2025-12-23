@@ -1,12 +1,12 @@
+import TransactionListItem from "@/components/TransactionListItem";
 import { getTransactionsPaginated } from "@/lib/appwrite";
-import { formatCurrency } from "@/lib/currencyFunctions";
 import { getQueuedTransactions } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
 import { useTransactionDetailStore } from "@/store/useTransactionDetailStore";
 import type { Transaction } from "@/types/type";
 import { Feather } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
@@ -14,7 +14,7 @@ import {
     Pressable,
     ScrollView,
     Text,
-    View,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -50,6 +50,13 @@ export default function AllTransactionsScreen() {
     loadTransactions(true);
   }, []);
 
+  // Reload transactions when screen is focused (to pick up category changes)
+  useFocusEffect(
+    useCallback(() => {
+      loadTransactions(true);
+    }, [user?.id])
+  );
+
   const loadTransactions = async (reset: boolean = false) => {
     if (!user?.id) return;
     
@@ -69,15 +76,22 @@ export default function AllTransactionsScreen() {
         reset ? getQueuedTransactions() : Promise.resolve([]),
       ]);
       
-      const newTransactions: Transaction[] = result.documents.map((t) => ({
-        id: (t as any).$id ?? `${t.userId}-${t.date}`,
-        title: t.title,
-        subtitle: t.subtitle || "",
-        amount: t.amount,
-        categoryId: t.categoryId,
-        kind: t.kind,
-        date: t.date,
-      }));
+      const newTransactions: Transaction[] = result.documents.map((t) => {
+        const docId = (t as any).$id ?? (t as any).id;
+        const safeId = typeof docId === "string"
+          ? docId
+          : `${t.userId}-${t.date}-${t.title ?? ""}-${t.amount}`;
+
+        return {
+          id: safeId,
+          title: t.title,
+          subtitle: t.subtitle || "",
+          amount: t.amount,
+          categoryId: t.categoryId,
+          kind: t.kind,
+          date: t.date,
+        };
+      });
 
       // Add queued transactions (only on reset/initial load)
       if (reset) {
@@ -93,13 +107,13 @@ export default function AllTransactionsScreen() {
         }));
 
         // Combine and sort by date (most recent first)
-        const combined = [...newTransactions, ...queuedTransactions].sort(
+        const combined = dedupeById([...newTransactions, ...queuedTransactions]).sort(
           (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
         );
         
         setTransactions(combined);
       } else {
-        setTransactions(prev => [...prev, ...newTransactions]);
+        setTransactions(prev => dedupeById([...prev, ...newTransactions]));
       }
 
       setHasMore(result.hasMore);
@@ -110,6 +124,16 @@ export default function AllTransactionsScreen() {
       setLoading(false);
       setLoadingMore(false);
     }
+  };
+
+  const dedupeById = (list: Transaction[]) => {
+    const byId = new Map<string, Transaction>();
+    for (const tx of list) {
+      if (!tx.id) continue;
+      // Keep the latest occurrence (later in list wins) to favor freshly fetched data
+      byId.set(tx.id, tx);
+    }
+    return Array.from(byId.values());
   };
 
   const handleLoadMore = useCallback(() => {
@@ -172,7 +196,7 @@ export default function AllTransactionsScreen() {
     const grouped: GroupedTransaction[] = [];
     let currentDate = "";
 
-    sorted.forEach((transaction) => {
+    sorted.forEach((transaction, index) => {
       const transactionDate = new Date(transaction.date).toDateString();
       
       if (transactionDate !== currentDate) {
@@ -181,30 +205,60 @@ export default function AllTransactionsScreen() {
           type: "header",
           date: transaction.date,
           dateLabel: formatDateHeader(transaction.date),
-          id: `header-${transaction.date}`,
+          id: `header-${transactionDate}`,
         });
       }
 
       grouped.push({
         type: "transaction",
         transaction,
-        id: transaction.id || `transaction-${Math.random()}`,
+        id:
+          transaction.id ||
+          `transaction-${transaction.date}-${transaction.title}-${transaction.amount}-${index}`,
       });
     });
 
     return grouped;
   }, [filteredTransactions]);
 
-  const getTransactionIcon = (categoryId: string) => {
-    const iconMap: { [key: string]: string } = {
-      food: "shopping-bag",
-      transport: "truck",
-      shopping: "shopping-cart",
-      bills: "file-text",
-      entertainment: "film",
-      default: "dollar-sign",
-    };
-    return iconMap[categoryId] || iconMap.default;
+  const getTransactionIcon = (categoryName: string | undefined, kind: "income" | "expense") => {
+    const key = (categoryName || "").toLowerCase();
+
+    if (key.includes("grocery") || key.includes("supermarket") || key.includes("food") || key.includes("restaurant") || key.includes("coffee")) {
+      return "shopping-bag";
+    }
+    if (key.includes("transport") || key.includes("taxi") || key.includes("uber") || key.includes("bolt") || key.includes("bus") || key.includes("train") || key.includes("travel") || key.includes("flight") || key.includes("fuel") || key.includes("petrol") || key.includes("gas")) {
+      return "truck";
+    }
+    if (key.includes("bill") || key.includes("utility") || key.includes("wifi") || key.includes("internet") || key.includes("phone")) {
+      return "file";
+    }
+    if (key.includes("entertain") || key.includes("movie") || key.includes("film") || key.includes("music") || key.includes("tv")) {
+      return "play";
+    }
+    if (key.includes("shop") || key.includes("retail") || key.includes("store") || key.includes("clothe")) {
+      return "shopping-bag";
+    }
+    if (key.includes("health") || key.includes("medical") || key.includes("gym") || key.includes("fitness") || key.includes("doctor")) {
+      return "heart";
+    }
+    if (key.includes("rent") || key.includes("mortgage") || key.includes("home") || key.includes("housing")) {
+      return "home";
+    }
+    if (key.includes("salary") || key.includes("pay") || key.includes("wage") || key.includes("income")) {
+      return "trending-up";
+    }
+    if (key.includes("transfer")) {
+      return "repeat";
+    }
+    if (key.includes("education") || key.includes("school") || key.includes("tuition")) {
+      return "book";
+    }
+    if (key.includes("gift") || key.includes("donation") || key.includes("charity")) {
+      return "gift";
+    }
+
+    return "dollar-sign";
   };
 
   const getTransactionColor = (kind: "income" | "expense") => {
@@ -336,7 +390,6 @@ export default function AllTransactionsScreen() {
               }
 
               const transaction = item.transaction!;
-              const category = categories.find((cat) => cat.id === transaction.categoryId);
               return (
                 <Pressable
                   onPress={() => {
@@ -346,38 +399,15 @@ export default function AllTransactionsScreen() {
                   }}
                   className="active:opacity-70"
                 >
-                  <View className="px-5 py-4 border-b border-gray-100 flex-row items-center justify-between bg-white">
-                    <View className="flex-row items-center flex-1">
-                      <View
-                        className="w-10 h-10 rounded-full items-center justify-center mr-3"
-                        style={{ backgroundColor: `${getTransactionColor(transaction.kind)}20` }}
-                      >
-                        <Feather
-                          name={getTransactionIcon(transaction.categoryId) as any}
-                          size={18}
-                          color={getTransactionColor(transaction.kind)}
-                        />
-                      </View>
-                      <View className="flex-1">
-                        <Text className="font-semibold text-dark-100 text-base">
-                          {transaction.title}
-                        </Text>
-                        <Text className="text-xs text-gray-500 mt-1">
-                          {category?.name || "Uncategorized"}
-                        </Text>
-                        <Text className="text-xs text-gray-400 mt-1">
-                          {formatDateHeader(transaction.date)} • {formatTime(transaction.date)}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text
-                      className="font-bold text-base"
-                      style={{ color: getTransactionColor(transaction.kind) }}
-                    >
-                      {transaction.kind === "income" ? "+" : "-"}
-                      {formatCurrency(transaction.amount / 100, currency)}
-                    </Text>
-                  </View>
+                  <TransactionListItem
+                    transaction={transaction}
+                    currency={currency}
+                    categoryName={categories.find((cat) => cat.id === transaction.categoryId)?.name}
+                    onPress={() => {
+                      useTransactionDetailStore.getState().setSelectedTransactionId(transaction.id);
+                      router.push("/transaction-detail");
+                    }}
+                  />
                 </Pressable>
               );
             }}

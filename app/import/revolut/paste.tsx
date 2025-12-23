@@ -1,10 +1,13 @@
+import { resolveAccountInfo, updateAccountBalance, upsertBalanceRemote } from "@/lib/accountBalances";
 import {
     convertRevolutToAppTransaction,
+    markTransfers,
     ParsedTransaction,
     parseRevolutCSV,
     RevolutParseResult,
     SkippedRow,
 } from "@/lib/csvParser";
+import { useSessionStore } from "@/store/useSessionStore";
 import { Feather } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { router } from "expo-router";
@@ -41,6 +44,7 @@ export function clearParsedTransactions() {
 export default function RevolutImportPasteScreen() {
   const [csvContent, setCSVContent] = useState("");
   const [loading, setLoading] = useState(false);
+  const { user } = useSessionStore();
 
   const handlePaste = async () => {
     try {
@@ -81,9 +85,133 @@ export default function RevolutImportPasteScreen() {
         parseResult.transactions.map(convertRevolutToAppTransaction)
       );
 
+      // Detect and mark transfer pairs (account transfers with matching debit/credit)
+      const transactionsWithTransfers = await markTransfers(convertedTransactions);
+
+      // Extract and save the latest balance for each account (keyed by accountKey)
+      const accountBalances = new Map<
+        string,
+        {
+          accountName: string;
+          accountType: string;
+          provider: string;
+          currency: string;
+          balance: number;
+          accountKey: string;
+          lastDateISO: string;
+        }
+      >();
+
+      // Track the last seen vault name per currency so generic "Pocket Withdrawal" rows can still map correctly
+      const lastVaultNameByCurrency = new Map<string, string>();
+      // Track the last seen pocket name per currency so pocket spend rows without the pattern can still map correctly
+      const lastPocketNameByCurrency = new Map<string, string>();
+
+      if (parseResult.transactions.length > 0) {
+        // FIRST PASS: Process completed transactions to establish final balances
+        for (const transaction of parseResult.transactions) {
+          if (!transaction.balance) continue;
+          if (transaction.state && transaction.state.toUpperCase() !== 'COMPLETED') continue;
+
+          const currency = transaction.currency || 'EUR';
+          let vaultNameHint: string | undefined;
+          let pocketNameHint: string | undefined;
+
+          const productLower = transaction.product?.toLowerCase();
+
+          if (productLower === 'savings') {
+            const vaultMatch = transaction.description.match(/To pocket (?:EUR|GBP|USD)\s+(.+?)\s+from (?:EUR|GBP|USD)/i);
+            if (vaultMatch && vaultMatch[1]) {
+              lastVaultNameByCurrency.set(currency, vaultMatch[1].trim());
+            } else if (transaction.description?.toLowerCase() === 'pocket withdrawal') {
+              vaultNameHint = lastVaultNameByCurrency.get(currency);
+            }
+          } else if (productLower === 'pocket') {
+            const pocketMatch = transaction.description.match(/To pocket (?:EUR|GBP|USD)\s+(.+?)\s+from (?:EUR|GBP|USD)/i);
+            if (pocketMatch && pocketMatch[1]) {
+              lastPocketNameByCurrency.set(currency, pocketMatch[1].trim());
+            } else {
+              pocketNameHint = lastPocketNameByCurrency.get(currency);
+            }
+          }
+
+          const accountInfo = resolveAccountInfo({
+            description: transaction.description,
+            product: transaction.product,
+            currency,
+            provider: 'revolut',
+            pocketNameHint,
+            vaultNameHint,
+          });
+
+          const balanceAmount = parseFloat(transaction.balance);
+          if (isNaN(balanceAmount)) continue;
+
+          const balanceInCents = Math.round(balanceAmount * 100);
+          const txnDateISO = ((transaction.completedDate || transaction.startedDate)?.replace(' ', 'T')) || new Date().toISOString();
+
+          const existing = accountBalances.get(accountInfo.accountKey);
+          if (!existing || new Date(txnDateISO).getTime() > new Date(existing.lastDateISO).getTime()) {
+            accountBalances.set(accountInfo.accountKey, {
+              ...accountInfo,
+              balance: balanceInCents,
+              lastDateISO: txnDateISO,
+            });
+          }
+        }
+
+        // SECOND PASS: Accumulate pending transaction amounts per account
+        const pendingAdjustments = new Map<string, number>();
+        for (const transaction of parseResult.transactions) {
+          if (!transaction.state || transaction.state.toUpperCase() !== 'PENDING') continue;
+
+          const currency = transaction.currency || 'EUR';
+          const amount = transaction.amount || 0;
+          if (isNaN(amount)) continue;
+
+          const vaultNameHint = lastVaultNameByCurrency.get(currency);
+          const pocketNameHint = lastPocketNameByCurrency.get(currency);
+
+          const accountInfo = resolveAccountInfo({
+            description: transaction.description,
+            product: transaction.product,
+            currency,
+            provider: 'revolut',
+            pocketNameHint,
+            vaultNameHint,
+          });
+
+          const pendingInCents = Math.round(amount * 100);
+          const current = pendingAdjustments.get(accountInfo.accountKey) || 0;
+          pendingAdjustments.set(accountInfo.accountKey, current + pendingInCents);
+        }
+
+        // Apply pending adjustments to final balances
+        for (const [accountKey, adjustment] of pendingAdjustments) {
+          const existing = accountBalances.get(accountKey);
+          if (existing) {
+            existing.balance += adjustment;
+          }
+        }
+
+        // Save all account balances locally and remotely (if signed in)
+        const importTime = new Date().toISOString(); // Use actual import time, not transaction date
+        for (const [, { accountName, accountType, provider, currency, balance, accountKey }] of accountBalances) {
+          await updateAccountBalance(accountName, balance, currency, {
+            accountKey,
+            accountType,
+            provider,
+            lastUpdated: importTime,
+          });
+          if (user?.id) {
+            await upsertBalanceRemote(user.id, { accountKey, accountName, accountType, provider, currency }, balance, importTime);
+          }
+        }
+      }
+
       // Store in cache instead of passing through params
       parsedTransactionsCache = {
-        transactions: convertedTransactions,
+        transactions: transactionsWithTransfers,
         parsedRows: parseResult.transactions.length,
         totalRows: parseResult.totalRows,
         skippedRows: parseResult.skipped,

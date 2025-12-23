@@ -3,7 +3,6 @@ import { Query } from "appwrite";
 import { AppState } from "react-native";
 import { databases } from "./appwrite";
 import { captureException, captureMessage } from './sentry';
-import { resetSyncStatus } from "./syncQueue";
 
 const DATABASE_ID = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID;
 const TRANSACTION_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSACTIONS || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_TRANSACTIONS;
@@ -11,6 +10,7 @@ const TRANSACTION_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_TABLE_TRANSAC
 const DELETE_QUEUE_KEY = "delete_queue";
 const DELETE_STATUS_KEY = "delete_status";
 const DELETE_LOCK_KEY = "delete_lock"; // Prevent concurrent delete operations
+const SYNC_STATUS_KEY = 'budget_app_sync_status';
 
 // In-memory lock to prevent concurrent delete operations
 let deleteOperationLocked = false;
@@ -22,6 +22,19 @@ interface DeleteOperation {
   totalToDelete: number; // Total transactions to delete (set when starting)
   lastError?: string;
   createdAt: string;
+}
+
+async function resetSyncStatus(): Promise<void> {
+  try {
+    const status = {
+      isSyncing: false,
+      progress: { current: 0, total: 0 },
+      failedCount: 0,
+    };
+    await AsyncStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(status));
+  } catch (error) {
+    console.error('Error resetting sync status:', error);
+  }
 }
 
 export async function queueDeleteAll(userId: string): Promise<void> {
@@ -36,7 +49,7 @@ export async function queueDeleteAll(userId: string): Promise<void> {
   await AsyncStorage.setItem(DELETE_QUEUE_KEY, JSON.stringify(operation));
   
   // Also clear the sync queue since we're deleting everything
-  await AsyncStorage.removeItem("sync_queue");
+  await AsyncStorage.removeItem("budget_app_sync_queue");
   
   // Stop any in-progress sync
   await resetSyncStatus();
@@ -108,9 +121,9 @@ export async function startDeletingTransactions(
     onProgressUpdate?.(0, "in-progress");
 
     let totalDeleted = 0;
-    const batchSize = 2; // Very small batches to avoid rate limits
-    const delayBetweenBatches = 1000; // 1 second delay between batches
-    const delayBetweenDocuments = 0; // No additional per-document delay needed with small batches
+    const batchSize = 1; // Process one at a time to minimize rate limit issues
+    const delayBetweenBatches = 2000; // 2 second delay between batches
+    const delayBetweenDocuments = 500; // 0.5 second delay between documents
 
     while (true) {
       // Check if app went to background
@@ -175,7 +188,7 @@ export async function startDeletingTransactions(
             });
             
             // Wait longer and retry this document
-            await new Promise((resolve) => setTimeout(resolve, 5000)); // 5 second wait
+            await new Promise((resolve) => setTimeout(resolve, 10000)); // 10 second wait
             
             try {
               await databases.deleteDocument(
