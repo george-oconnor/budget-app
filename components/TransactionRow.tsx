@@ -18,7 +18,13 @@ export default function TransactionRow({
   const amountColor = isIncome ? "text-green-600" : "text-red-500";
   const [tldIndex, setTldIndex] = useState(0);
   const [iconFailed, setIconFailed] = useState(false);
-  const merchantIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.title, 64, tldIndex);
+  const titleKey = (transaction.title || "").toLowerCase();
+  const isRevolutTransfer =
+    (transaction.source === "revolut_import") &&
+    (titleKey.includes("to pocket") || titleKey.includes("transfer to") || titleKey.includes("transfer from"));
+  const merchantIconUrl = iconFailed
+    ? null
+    : (isRevolutTransfer ? `https://www.google.com/s2/favicons?domain=revolut.com&sz=64` : getMerchantIconUrl(transaction.title, 64, tldIndex));
 
   const getCategoryIcon = (categoryName?: string) => {
     const key = (categoryName || "").toLowerCase();

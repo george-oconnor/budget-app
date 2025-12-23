@@ -1,6 +1,7 @@
 import { databases } from "@/lib/appwrite";
 import { learnMerchantCategory } from "@/lib/categorization";
 import { formatCurrency } from "@/lib/currencyFunctions";
+import { getMerchantIconUrl } from "@/lib/merchantIcons";
 import { getQueuedTransactions } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
@@ -10,7 +11,7 @@ import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Image, Modal, Pressable, RefreshControl, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 // Map category names to default icons
@@ -69,6 +70,9 @@ export default function TransactionDetailScreen() {
   const [saving, setSaving] = useState(false);
   const [isQueuedTransaction, setIsQueuedTransaction] = useState(false);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [tldIndex, setTldIndex] = useState(0);
+  const [iconFailed, setIconFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const currency = summary?.currency ?? "USD";
 
   // Fetch transaction details
@@ -111,6 +115,8 @@ export default function TransactionDetailScreen() {
           kind: response.kind,
           date: response.date,
           excludeFromAnalytics: response.excludeFromAnalytics ?? false,
+          isAnalyticsProtected: response.isAnalyticsProtected ?? false,
+          source: response.source,
         };
         
         isQueued = false;
@@ -144,6 +150,24 @@ export default function TransactionDetailScreen() {
       setLoading(false);
     }
   };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      // Reset icon state so we re-attempt fetching favicon on refresh
+      setIconFailed(false);
+      setTldIndex(0);
+      await loadTransaction();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // If the transaction title changes (different merchant), reset icon state
+  useEffect(() => {
+    setIconFailed(false);
+    setTldIndex(0);
+  }, [transaction?.title]);
 
   const handleSave = async () => {
     if (!transaction || !user?.id) return;
@@ -373,23 +397,116 @@ export default function TransactionDetailScreen() {
         )}
       </View>
 
-      <ScrollView className="flex-1 px-5 py-6" showsVerticalScrollIndicator={false}>
-        {/* Amount Display / Input */}
+      <ScrollView
+        className="flex-1 px-5 py-6"
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            colors={["#7C3AED"]}
+            tintColor="#7C3AED"
+          />
+        }
+      >
+        {/* Amount Display / Input with Icon */}
         <View className="mb-6">
           <Text className="text-gray-500 text-sm mb-2">Amount</Text>
-          {isEditing ? (
-            <TextInput
-              value={editedAmount}
-              onChangeText={setEditedAmount}
-              placeholder="0.00"
-              keyboardType="decimal-pad"
-              className="text-4xl font-bold text-dark-100 border-b-2 border-primary pb-2"
-            />
-          ) : (
-            <Text className="text-4xl font-bold text-dark-100">
-              {formatCurrency(transaction.amount / 100, currency)}
-            </Text>
-          )}
+          <View className="flex-row items-center justify-between">
+            <View className="flex-1">
+              {isEditing ? (
+                <TextInput
+                  value={editedAmount}
+                  onChangeText={setEditedAmount}
+                  placeholder="0.00"
+                  keyboardType="decimal-pad"
+                  className="text-4xl font-bold text-dark-100 border-b-2 border-primary pb-2"
+                />
+              ) : (
+                <Text className="text-4xl font-bold text-dark-100">
+                  {formatCurrency(transaction.amount / 100, currency)}
+                </Text>
+              )}
+            </View>
+            
+            {/* Merchant Icon */}
+            {transaction && (() => {
+              const baseIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.title, 128, tldIndex);
+              const titleKey = (transaction.title || "").toLowerCase();
+              const isRevolutTransfer =
+                (transaction.source === "revolut_import") &&
+                (titleKey.includes("to pocket") || titleKey.includes("transfer to") || titleKey.includes("transfer from"));
+              const merchantIconUrl = baseIconUrl ?? (isRevolutTransfer ? `https://www.google.com/s2/favicons?domain=revolut.com&sz=128` : null);
+              const hasMerchantIcon = merchantIconUrl !== null;
+              const isIncome = transaction.kind === "income";
+              const iconBackgroundColor = hasMerchantIcon ? "#FFFFFF" : (isIncome ? "#2F9B6520" : "#F1414120");
+              
+              const getCategoryIcon = (name?: string) => {
+                const key = (name || "").toLowerCase();
+                if (key.includes("grocery") || key.includes("supermarket") || key.includes("food") || key.includes("restaurant") || key.includes("coffee")) return "shopping-bag";
+                if (key.includes("transport") || key.includes("taxi") || key.includes("uber") || key.includes("bolt") || key.includes("bus") || key.includes("train") || key.includes("travel") || key.includes("flight") || key.includes("fuel") || key.includes("petrol") || key.includes("gas")) return "truck";
+                if (key.includes("bill") || key.includes("utility") || key.includes("wifi") || key.includes("internet") || key.includes("phone")) return "file";
+                if (key.includes("entertain") || key.includes("movie") || key.includes("film") || key.includes("music") || key.includes("tv")) return "play";
+                if (key.includes("shop") || key.includes("retail") || key.includes("store") || key.includes("clothe")) return "shopping-bag";
+                if (key.includes("health") || key.includes("medical") || key.includes("gym") || key.includes("fitness") || key.includes("doctor")) return "heart";
+                if (key.includes("rent") || key.includes("mortgage") || key.includes("home") || key.includes("housing")) return "home";
+                if (key.includes("salary") || key.includes("pay") || key.includes("wage") || key.includes("income")) return "trending-up";
+                if (key.includes("transfer")) return "repeat";
+                if (key.includes("education") || key.includes("school") || key.includes("tuition")) return "book";
+                if (key.includes("gift") || key.includes("donation") || key.includes("charity")) return "gift";
+                return "dollar-sign";
+              };
+              
+              const handleImageError = () => {
+                if (tldIndex < 2) {
+                  setTldIndex(tldIndex + 1);
+                  return;
+                }
+                setIconFailed(true);
+              };
+
+              const handleIconPress = () => {
+                if (hasMerchantIcon && merchantIconUrl) {
+                  const tlds = ['ie', 'com', 'co.uk'];
+                  Alert.alert(
+                    "Merchant Icon Source",
+                    `Favicon from Google\n\nURL: ${merchantIconUrl}${baseIconUrl ? `\n\nTLD attempt: .${tlds[tldIndex]}` : ''}`,
+                    [{ text: "OK" }]
+                  );
+                } else {
+                  Alert.alert(
+                    "Category Icon",
+                    `Fallback category icon\n\nCategory: ${category?.name || "Uncategorized"}\n\nNo merchant favicon found after trying .ie, .com, and .co.uk domains.`,
+                    [{ text: "OK" }]
+                  );
+                }
+              };
+
+              return (
+                <Pressable onPress={handleIconPress} className="active:opacity-70">
+                  <View
+                    className="w-20 h-20 rounded-full items-center justify-center ml-4"
+                    style={{ backgroundColor: iconBackgroundColor, borderWidth: hasMerchantIcon ? 2 : 0, borderColor: '#E5E7EB' }}
+                  >
+                    {hasMerchantIcon ? (
+                      <Image
+                        source={{ uri: merchantIconUrl }}
+                        style={{ width: 64, height: 64, borderRadius: 32 }}
+                        resizeMode="contain"
+                        onError={handleImageError}
+                      />
+                    ) : (
+                      <Feather
+                        name={getCategoryIcon(category?.name) as any}
+                        size={32}
+                        color={isIncome ? "#2F9B65" : "#F14141"}
+                      />
+                    )}
+                  </View>
+                </Pressable>
+              );
+            })()}
+          </View>
         </View>
 
         {/* Title */}
@@ -452,6 +569,17 @@ export default function TransactionDetailScreen() {
           </Text>
         </View>
 
+        {/* Source */}
+        <View className="mb-6 p-4 rounded-2xl bg-gray-50">
+          <Text className="text-gray-500 text-sm mb-2">Source</Text>
+          <Text className="text-base font-semibold text-dark-100">
+            {transaction.source === "revolut_import" && "Revolut Import"}
+            {transaction.source === "manual" && "Manual Entry"}
+            {transaction.source === "other_import" && "Other Import"}
+            {!transaction.source && "Unknown"}
+          </Text>
+        </View>
+
         {/* Exclude from Analytics Toggle */}
         <View className="mb-6 p-4 rounded-2xl bg-gray-50 flex-row items-center justify-between">
           <View className="flex-1">
@@ -475,7 +603,7 @@ export default function TransactionDetailScreen() {
         </View>
 
         {/* Sync Status */}
-        <View className="mb-4">
+        <View className="mb-6 p-4 rounded-2xl bg-gray-50">
           <Text className="text-gray-500 text-sm mb-2">Sync Status</Text>
           <View className="flex-row items-center gap-3">
             <View
@@ -487,7 +615,7 @@ export default function TransactionDetailScreen() {
             </Text>
           </View>
           {isQueuedTransaction && (
-            <Text className="text-xs text-gray-500 mt-1">
+            <Text className="text-xs text-gray-500 mt-2">
               This transaction is waiting to sync. Keep the app open or connected to send it.
             </Text>
           )}

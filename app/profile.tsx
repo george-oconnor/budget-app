@@ -1,15 +1,16 @@
 import { queueDeleteAll } from "@/lib/deleteQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
+import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    ScrollView,
+    Text,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -82,14 +83,20 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
-        <View className="mb-8">
-          <Pressable
-            onPress={() => router.back()}
-            className="mb-6 flex-row items-center gap-2"
-          >
-            <Text className="text-primary text-base">← Back</Text>
-          </Pressable>
-          <Text className="text-3xl font-bold text-dark-100">Profile</Text>
+        <View className="bg-white -mx-5 px-5 pt-2 pb-6 mb-4">
+          <View className="flex-row items-center justify-between">
+            <Pressable
+              onPress={() => router.back()}
+              className="flex-row items-center gap-2"
+            >
+              <Feather name="chevron-left" size={20} color="#7C3AED" />
+              <Text className="text-primary text-base font-semibold">Back</Text>
+            </Pressable>
+            <Text className="text-xs text-gray-500">Account</Text>
+          </View>
+          <View className="mt-1 items-end">
+            <Text className="text-2xl font-bold text-dark-100">Profile</Text>
+          </View>
         </View>
 
         {/* Avatar Section */}

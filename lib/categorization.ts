@@ -32,8 +32,26 @@ async function getLearnedMappings(): Promise<MerchantMapping> {
       const data = await AsyncStorage.getItem(MERCHANT_MAPPINGS_KEY);
       return data ? JSON.parse(data) : {};
     }
-
-    const res = await databases.listDocuments(databaseId, merchantVotesTableId, []);
+    // Basic retry on transient Appwrite failures (e.g., 503)
+    const maxAttempts = 2;
+    let attempt = 0;
+    let res: any;
+    while (attempt < maxAttempts) {
+      try {
+        res = await databases.listDocuments(databaseId, merchantVotesTableId, []);
+        break;
+      } catch (err: any) {
+        attempt++;
+        const msg = String(err?.message || err);
+        // Only retry on likely transient errors
+        const isTransient = msg.includes('503') || msg.toLowerCase().includes('timeout');
+        if (!isTransient || attempt >= maxAttempts) {
+          throw err;
+        }
+        // Small backoff
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
     const mappings: MerchantMapping = {};
 
     // Group votes by merchant and find the most popular category
@@ -67,7 +85,13 @@ async function getLearnedMappings(): Promise<MerchantMapping> {
 
     return mappings;
   } catch (error) {
-    console.error('Error loading merchant mappings:', error);
+    const msg = String((error as any)?.message || error);
+    // Reduce noise for transient failures; still fallback gracefully
+    if (msg.includes('503') || msg.toLowerCase().includes('timeout')) {
+      console.warn('Merchant mappings temporarily unavailable, using local cache');
+    } else {
+      console.error('Error loading merchant mappings:', error);
+    }
     // Fallback to AsyncStorage
     try {
       const data = await AsyncStorage.getItem(MERCHANT_MAPPINGS_KEY);

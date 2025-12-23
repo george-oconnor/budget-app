@@ -23,7 +23,8 @@ export default function RemainingSpendCard({
 }) {
   const currency = summary?.currency ?? "USD";
   const budget = summary?.monthlyBudget ?? 0;
-  const noBudgetSet = budget === 0;
+  const budgetSource = summary?.budgetSource;
+  const noBudgetSet = budget === 0 && budgetSource !== "lastMonth";
   const [pressed, setPressed] = useState(false);
   const [cardPressed, setCardPressed] = useState(false);
   

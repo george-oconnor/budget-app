@@ -153,21 +153,23 @@ export default function CategoryTransactionsScreen() {
   return (
     <SafeAreaView className="flex-1 bg-white">
       {/* Header */}
-      <View className="px-5 pt-2 pb-6 border-b border-gray-100">
-        <View className="flex-row items-center justify-between mb-4">
+      <View className="bg-white px-5 pt-2 pb-6">
+        <View className="flex-row items-center justify-between">
           <Pressable
             onPress={() => router.back()}
-            className="active:opacity-70"
+            className="flex-row items-center gap-2"
           >
-            <Feather name="chevron-left" size={24} color="#000" />
+            <Feather name="chevron-left" size={20} color="#7C3AED" />
+            <Text className="text-primary text-base font-semibold">Back</Text>
           </Pressable>
-          <Text className="text-xl font-bold text-dark-100">
-            {category?.name || "Uncategorized"}
-          </Text>
-          <View style={{ width: 24 }} />
+          <Text className="text-xs text-gray-500">Category</Text>
         </View>
+        <View className="mt-1 items-end">
+          <Text className="text-2xl font-bold text-dark-100">{category?.name || "Uncategorized"}</Text>
+        </View>
+      </View>
 
-        {/* Category Info */}
+      {/* Category Info */}
         <View className="flex-row items-center gap-3 bg-gray-50 rounded-2xl p-4">
           <View
             className="w-12 h-12 rounded-full items-center justify-center"
@@ -188,7 +190,6 @@ export default function CategoryTransactionsScreen() {
             </Text>
           </View>
         </View>
-      </View>
 
       {/* Transactions List */}
       {filteredTransactions.length === 0 ? (

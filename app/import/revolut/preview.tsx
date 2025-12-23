@@ -194,7 +194,10 @@ export default function ImportPreviewScreen() {
       setImportProgress({ current: 0, total: finalTransactions.length });
 
       // Queue transactions locally instead of uploading immediately
-      await queueTransactionsForSync(user.id, finalTransactions);
+      await queueTransactionsForSync(
+        user.id, 
+        finalTransactions.map(tx => ({ ...tx, source: "revolut_import" as const }))
+      );
 
       console.log(`Queued ${finalTransactions.length} transactions for sync`);
 

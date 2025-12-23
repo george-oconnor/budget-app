@@ -22,6 +22,7 @@ export interface QueuedTransaction {
   createdAt: string;
   excludeFromAnalytics?: boolean;
   isAnalyticsProtected?: boolean;
+  source?: "revolut_import" | "manual" | "other_import";
 }
 
 const SYNC_QUEUE_KEY = 'budget_app_sync_queue';
@@ -61,6 +62,7 @@ export async function queueTransactionsForSync(
     date: string;
     categoryId: string;
     currency: string;
+    source?: "revolut_import" | "manual" | "other_import";
   }[]
 ): Promise<QueuedTransaction[]> {
   try {

@@ -19,7 +19,13 @@ export default function TransactionListItem({
   const isIncome = transaction.kind === "income";
   const [tldIndex, setTldIndex] = useState(0);
   const [iconFailed, setIconFailed] = useState(false);
-  const merchantIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.title, 64, tldIndex);
+  const rawMerchantIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.title, 64, tldIndex);
+  // Revolut-specific fallback: for transfers "To pocket" or "Transfer to" from Revolut imports
+  const titleKey = (transaction.title || "").toLowerCase();
+  const isRevolutTransfer =
+    (transaction.source === "revolut_import") &&
+    (titleKey.includes("to pocket") || titleKey.includes("transfer to") || titleKey.includes("transfer from"));
+  const merchantIconUrl = rawMerchantIconUrl ?? (isRevolutTransfer ? `https://www.google.com/s2/favicons?domain=revolut.com&sz=64` : null);
 
   const hasMerchantIcon = merchantIconUrl !== null;
   const getTransactionColor = (kind: "income" | "expense") => (kind === "income" ? "#10B981" : "#EF4444");

@@ -155,6 +155,8 @@ export type BudgetDoc = {
   currency: string;
   cycleType?: "first_working_day" | "last_working_day" | "specific_date" | "last_friday"; // When budget cycle starts/ends
   cycleDay?: number; // For specific_date: 1-31
+  budgetSource?: "manual" | "lastMonth";
+  lastMonthReference?: string;
 };
 
 export type TransactionDoc = {
@@ -260,15 +262,24 @@ export async function getMonthlyBudget(userId: string) {
     Query.equal("userId", userId),
   ]);
   const doc = res.documents?.[0] as unknown as BudgetDoc | undefined;
-  return doc ?? { userId, monthlyBudget: 0, currency: "USD" };
+  return (
+    doc ?? {
+      userId,
+      monthlyBudget: 0,
+      currency: "EUR",
+      budgetSource: "manual",
+    }
+  );
 }
 
 export async function updateMonthlyBudget(
   userId: string,
   monthlyBudget: number,
-  currency: string = "USD",
+  currency: string = "EUR",
   cycleType: "first_working_day" | "last_working_day" | "specific_date" | "last_friday" = "first_working_day",
-  cycleDay?: number
+  cycleDay?: number,
+  budgetSource: "manual" | "lastMonth" = "manual",
+  lastMonthReference?: string
 ) {
   if (!databaseId || !budgetsTableId) throw new Error("Appwrite env not configured");
   
@@ -282,11 +293,18 @@ export async function updateMonthlyBudget(
     monthlyBudget,
     currency,
     cycleType,
+    budgetSource,
   };
   
   // Only add cycleDay if it's a specific_date type
   if (cycleType === "specific_date" && cycleDay) {
     budgetData.cycleDay = cycleDay;
+  }
+
+  if (budgetSource === "lastMonth" && lastMonthReference) {
+    budgetData.lastMonthReference = lastMonthReference;
+  } else if (budgetSource === "manual") {
+    budgetData.lastMonthReference = null;
   }
   
   if (existingDoc) {
@@ -479,7 +497,8 @@ export async function createTransaction(
   currency: string = 'EUR',
   customId?: string, // Optional custom ID to prevent duplicates
   excludeFromAnalytics?: boolean,
-  isAnalyticsProtected?: boolean
+  isAnalyticsProtected?: boolean,
+  source?: "revolut_import" | "manual" | "other_import"
 ) {
   if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
   
@@ -500,6 +519,10 @@ export async function createTransaction(
   
   if (isAnalyticsProtected !== undefined) {
     data.isAnalyticsProtected = isAnalyticsProtected;
+  }
+  
+  if (source !== undefined) {
+    data.source = source;
   }
   
   return await databases.createDocument(
@@ -530,6 +553,7 @@ export async function createBulkTransactions(
     currency: string;
     excludeFromAnalytics?: boolean;
     isAnalyticsProtected?: boolean;
+    source?: "revolut_import" | "manual" | "other_import";
   }>,
   onProgress?: (current: number, total: number) => void,
   shouldCancel?: () => boolean,
@@ -565,7 +589,8 @@ export async function createBulkTransactions(
             tx.currency,
             tx.id, // Pass the queue transaction ID to prevent duplicates
             tx.excludeFromAnalytics,
-            tx.isAnalyticsProtected
+            tx.isAnalyticsProtected,
+            tx.source
           );
           return { success: true, index: i + batchIndex };
         } catch (err: any) {

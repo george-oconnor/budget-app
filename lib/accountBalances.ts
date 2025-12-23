@@ -258,6 +258,19 @@ export async function upsertBalanceRemote(
   balance: number,
   lastUpdated?: string
 ) {
+  // Gracefully no-op when Appwrite env isn't configured (e.g., local dev/demo)
+  const envOk = Boolean(
+    process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT &&
+    process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID &&
+    process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID &&
+    (process.env.EXPO_PUBLIC_APPWRITE_TABLE_BALANCES || process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_BALANCES)
+  );
+
+  if (!envOk) {
+    console.warn("upsertBalanceRemote: Appwrite env not configured, skipping remote upsert");
+    return;
+  }
+
   return upsertAccountBalance(userId, {
     accountKey: accountInfo.accountKey,
     accountName: accountInfo.accountName,

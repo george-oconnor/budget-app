@@ -6,12 +6,13 @@ import { useSessionStore } from "@/store/useSessionStore";
 import { useTransactionDetailStore } from "@/store/useTransactionDetailStore";
 import type { Transaction } from "@/types/type";
 import { Feather } from "@expo/vector-icons";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     FlatList,
     Pressable,
+    RefreshControl,
     ScrollView,
     Text,
     View
@@ -36,6 +37,7 @@ export default function AllTransactionsScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [refreshing, setRefreshing] = useState(false);
   const currency = summary?.currency ?? "USD";
 
   // Apply filter from URL params on mount
@@ -49,13 +51,6 @@ export default function AllTransactionsScreen() {
   useEffect(() => {
     loadTransactions(true);
   }, []);
-
-  // Reload transactions when screen is focused (to pick up category changes)
-  useFocusEffect(
-    useCallback(() => {
-      loadTransactions(true);
-    }, [user?.id])
-  );
 
   const loadTransactions = async (reset: boolean = false) => {
     if (!user?.id) return;
@@ -90,6 +85,7 @@ export default function AllTransactionsScreen() {
           categoryId: t.categoryId,
           kind: t.kind,
           date: t.date,
+          source: (t as any).source,
         };
       });
 
@@ -104,6 +100,7 @@ export default function AllTransactionsScreen() {
           categoryId: t.categoryId,
           kind: t.kind,
           date: t.date,
+          source: t.source,
         }));
 
         // Combine and sort by date (most recent first)
@@ -141,6 +138,12 @@ export default function AllTransactionsScreen() {
       loadTransactions(false);
     }
   }, [hasMore, loadingMore, loading, cursor]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadTransactions(true);
+    setRefreshing(false);
+  }, [user?.id]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((t) => {
@@ -282,15 +285,22 @@ export default function AllTransactionsScreen() {
     <SafeAreaView className="flex-1 bg-white">
       <View className="flex-1">
         {/* Header */}
-        <View className="px-5 pt-4 pb-4 border-b border-gray-200">
-          <Pressable
-            onPress={() => router.back()}
-            className="mb-4 flex-row items-center gap-2"
-          >
-            <Feather name="chevron-left" size={20} color="#7C3AED" />
-            <Text className="text-primary text-base font-semibold">Back</Text>
-          </Pressable>
-          <Text className="text-3xl font-bold text-dark-100">All Transactions</Text>
+        <View className="bg-white px-5 pt-2 pb-6">
+          <View className="flex-row items-center justify-between">
+            <Pressable
+              onPress={() => router.back()}
+              className="flex-row items-center gap-2"
+            >
+              <Feather name="chevron-left" size={20} color="#7C3AED" />
+              <Text className="text-primary text-base font-semibold">Back</Text>
+            </Pressable>
+
+            <Text className="text-xs text-gray-500">All</Text>
+          </View>
+
+          <View className="mt-1 items-end">
+            <Text className="text-2xl font-bold text-dark-100">All Transactions</Text>
+          </View>
         </View>
 
         {/* Combined Filters */}
@@ -378,6 +388,14 @@ export default function AllTransactionsScreen() {
           <FlatList
             data={groupedData}
             keyExtractor={(item) => item.id}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                colors={["#7C3AED"]}
+                tintColor="#7C3AED"
+              />
+            }
             renderItem={({ item }) => {
               if (item.type === "header") {
                 return (

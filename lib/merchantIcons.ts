@@ -15,6 +15,7 @@ const merchantDomains: Record<string, string> = {
   'morrisons': 'morrisons.com',
   'marks & spencer': 'marksandspencer.com',
   'm&s': 'marksandspencer.com',
+  'fallon & byrne': 'fallonandbyrne.com',
   
   // Coffee & Food
   'starbucks': 'starbucks.com',
@@ -28,6 +29,9 @@ const merchantDomains: Record<string, string> = {
   'nando': 'nandos.co.uk',
   'pizza hut': 'pizzahut.com',
   'domino': 'dominos.com',
+  'mister magpie coffee': 'https://images.squarespace-cdn.com/content/v1/68ecd9f7270976356ad1b0d6/7733332e-7601-4e11-a84e-6a8f48ad90e2/Mister+Magpie+Logo.png?format=1500w',
+  'spar food & fuel': 'spar.co.uk',
+  'qskitchen. qs kitchen': 'qskitchen.ie',
   
   // Transport
   'uber': 'uber.com',
@@ -37,7 +41,8 @@ const merchantDomains: Record<string, string> = {
   'national rail': 'nationalrail.co.uk',
   'ryanair': 'ryanair.com',
   'easyjet': 'easyjet.com',
-  'freenow': 'free-now.com',
+  'free now': 'free-now.com',
+  'circle k gas station': 'circlek.com',
   
   // Streaming & Entertainment
   'netflix': 'netflix.com',
@@ -46,6 +51,7 @@ const merchantDomains: Record<string, string> = {
   'disney': 'disneyplus.com',
   'apple music': 'music.apple.com',
   'youtube': 'youtube.com',
+  '3olympia theatre': '3olympia.ie',
   
   // Shopping
   'amazon': 'amazon.com',
@@ -55,8 +61,11 @@ const merchantDomains: Record<string, string> = {
   'zara': 'zara.com',
   'h&m': 'hm.com',
   'primark': 'primark.com',
+  'penneys': 'primark.com',
   'asos': 'asos.com',
   'john lewis': 'johnlewis.com',
+  'tiktok shop seller': 'tiktok.com',
+  'ingredients.ie': 'https://ingredients.ie/static/logo.png',
   
   // Utilities & Services
   'vodafone': 'vodafone.com',
@@ -73,6 +82,7 @@ const merchantDomains: Record<string, string> = {
   'david lloyd': 'davidlloyd.co.uk',
   'boots': 'boots.com',
   'superdrug': 'superdrug.com',
+  'commercial rowing club': 'commercialrc.ie',
   
   // Banks & Finance
   'revolut': 'revolut.com',
@@ -87,7 +97,7 @@ const merchantDomains: Record<string, string> = {
 };
 
 /**
- * Get the domain for a merchant name
+ * Get the domain or direct URL for a merchant name
  */
 function getMerchantDomain(merchantName: string): string | null {
   const normalized = merchantName.toLowerCase().trim();
@@ -141,12 +151,17 @@ function getMerchantDomain(merchantName: string): string | null {
 }
 
 /**
- * Get the Google Favicon URL for a merchant
+ * Get the Google Favicon URL for a merchant, or direct image URL if provided
  * Returns null if no domain mapping exists
  */
 export function getMerchantIconUrl(merchantName: string, size: number = 64, tldIndex: number = 0): string | null {
   const domain = getMerchantDomain(merchantName);
   if (!domain) return null;
+  
+  // If domain is a direct URL (starts with http:// or https://), return it directly
+  if (domain.startsWith('http://') || domain.startsWith('https://')) {
+    return domain;
+  }
   
   // If domain already has a TLD or came from manual mapping, use it directly
   if (domain.includes('.') && tldIndex === 0) {

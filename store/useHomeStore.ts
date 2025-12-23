@@ -3,6 +3,7 @@ import {
     getMonthlyBudget,
     getTransactionsForMonth,
     getTransactionsInRange,
+    updateMonthlyBudget,
 } from "@/lib/appwrite";
 import { getTransactionsInCurrentCycle } from "@/lib/budgetCycle";
 import { captureException } from "@/lib/sentry";
@@ -142,6 +143,7 @@ export const useHomeStore = create<HomeState>((set) => ({
         date: t.date,
         currency: (t as any).currency,
         excludeFromAnalytics: (t as any).excludeFromAnalytics,
+        source: (t as any).source,
       }));
 
       // Add queued transactions to the list (exclude completed)
@@ -155,6 +157,7 @@ export const useHomeStore = create<HomeState>((set) => ({
         date: t.date,
         currency: t.currency,
         excludeFromAnalytics: t.excludeFromAnalytics,
+        source: t.source,
       }));
 
       // Filter out queued transactions that already exist in the database
@@ -196,12 +199,59 @@ export const useHomeStore = create<HomeState>((set) => ({
         .filter((t) => t.kind === "expense" && !t.excludeFromAnalytics)
         .reduce((s, t) => s + Math.abs(t.amount), 0);
 
+      const computeLastMonthBudget = () => {
+        const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const monthStart = new Date(prevMonth.getFullYear(), prevMonth.getMonth(), 1);
+        const monthEnd = new Date(prevMonth.getFullYear(), prevMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+        const total = allTransactions
+          .filter((t) => {
+            const d = new Date(t.date);
+            return (
+              t.kind === "expense" &&
+              !t.excludeFromAnalytics &&
+              d >= monthStart &&
+              d <= monthEnd
+            );
+          })
+          .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const monthRef = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
+        return { total, monthRef };
+      };
+
+      let effectiveMonthlyBudget = budgetDoc.monthlyBudget || 0;
+      let effectiveCurrency = budgetDoc.currency || "USD";
+      let effectiveBudgetSource = budgetDoc.budgetSource || "manual";
+
+      if (effectiveBudgetSource === "lastMonth") {
+        const { total, monthRef } = computeLastMonthBudget();
+
+        // If we have no expenses to base it on, keep the existing stored budget (avoid zeroing out UI)
+        if (total > 0 && (total !== effectiveMonthlyBudget || budgetDoc.lastMonthReference !== monthRef)) {
+          try {
+            await updateMonthlyBudget(
+              userId,
+              total,
+              effectiveCurrency,
+              (budgetDoc.cycleType as any) || "first_working_day",
+              budgetDoc.cycleDay,
+              "lastMonth",
+              monthRef
+            );
+            effectiveMonthlyBudget = total;
+          } catch (err) {
+            console.warn("updateMonthlyBudget (lastMonth recompute) failed", err);
+          }
+        }
+      }
+
       const summary: Summary = {
         balance: cycleIncome - cycleExpenses,
         income: cycleIncome,
         expenses: cycleExpenses,
-        currency: budgetDoc.currency || "USD",
-        monthlyBudget: budgetDoc.monthlyBudget || 0,
+        currency: effectiveCurrency,
+        monthlyBudget: effectiveMonthlyBudget,
+        budgetSource: effectiveBudgetSource,
+        lastMonthReference: budgetDoc.lastMonthReference,
       };
 
       set({
