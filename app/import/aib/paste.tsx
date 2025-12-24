@@ -30,6 +30,8 @@ type ParsedCache = {
   totalRows: number;
   skippedRows: number;
   skippedDetails: SkippedRow[];
+  finalBalance?: number; // Final balance from AIB CSV in cents
+  currency?: string; // Currency of the transactions
 };
 
 let parsedTransactionsCache: ParsedCache | null = null;
@@ -118,12 +120,19 @@ export default function AibImportPasteScreen() {
 
       const transactionsWithTransfers = await markTransfers(convertedTransactions);
 
+      // Extract final balance from the last transaction (most recent) and currency
+      const finalAibTx = parseResult.transactions[parseResult.transactions.length - 1];
+      const finalBalance = finalAibTx?.balance ? parseFloat(finalAibTx.balance.toString().replace(/,/g, '')) * 100 : undefined;
+      const currency = parseResult.transactions[0]?.currency || 'EUR';
+
       parsedTransactionsCache = {
         transactions: transactionsWithTransfers,
         parsedRows: parseResult.transactions.length,
         totalRows: parseResult.totalRows,
         skippedRows: parseResult.skipped,
         skippedDetails: parseResult.skippedDetails,
+        finalBalance: finalBalance ? Math.round(finalBalance) : undefined,
+        currency,
       };
 
       router.push("/import/aib/preview" as any);

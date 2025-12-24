@@ -1,4 +1,5 @@
 import { getAccountBalances } from "@/lib/accountBalances";
+import { updateAccountBalance } from "@/lib/accountBalances";
 import { getAllTransactionsForUser } from "@/lib/appwrite";
 import { detectTransferPairs, markTransfers } from "@/lib/csvParser";
 import { queueTransactionsForSync } from "@/lib/syncQueue";
@@ -69,6 +70,8 @@ export default function ImportPreviewScreen() {
   const [isCreatingNewAccount, setIsCreatingNewAccount] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
   const [newAccountType, setNewAccountType] = useState("Current");
+  const [finalBalance, setFinalBalance] = useState<number | undefined>();
+  const [currency, setCurrency] = useState<string>("EUR");
 
   useEffect(() => {
     const cached = getParsedTransactions();
@@ -80,6 +83,8 @@ export default function ImportPreviewScreen() {
         skippedRows: cached.skippedRows,
         skippedDetails: cached.skippedDetails,
       });
+      setFinalBalance(cached.finalBalance);
+      setCurrency(cached.currency || "EUR");
     } else {
       Alert.alert("Error", "No transactions found. Please go back and try again.");
       router.back();
@@ -243,6 +248,18 @@ export default function ImportPreviewScreen() {
         current += 1;
         setImportProgress({ current, total: finalTransactions.length });
         await new Promise(res => setTimeout(res, 50));
+      }
+
+      // Update account balance if we have a final balance and account selection
+      if (finalBalance !== undefined) {
+        const accountName = isCreatingNewAccount ? newAccountName : selectedAccountKey;
+        if (accountName) {
+          await updateAccountBalance(accountName, finalBalance, currency, {
+            provider: "aib",
+            accountType: isCreatingNewAccount ? newAccountType : undefined,
+          });
+          console.log(`Updated balance for ${accountName}: ${(finalBalance / 100).toFixed(2)} ${currency}`);
+        }
       }
 
       await fetchHome();
