@@ -5,6 +5,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 const IMPORT_OPTIONS = [
   {
+    id: "aib",
+    name: "AIB",
+    icon: "briefcase",
+    description: "Import transactions from AIB bank statements",
+    color: "#0EA5E9",
+  },
+  {
     id: "revolut",
     name: "Revolut",
     icon: "credit-card",
@@ -32,6 +39,9 @@ const IMPORT_OPTIONS = [
 export default function ImportScreen() {
   const handleImportOption = (optionId: string) => {
     switch (optionId) {
+      case "aib":
+        router.push("/import/aib" as any);
+        break;
       case "revolut":
         router.push("/import/revolut");
         break;
@@ -80,40 +90,35 @@ export default function ImportScreen() {
               }`}
             >
               <View
-                className="h-12 w-12 items-center justify-center rounded-xl"
-                style={{ backgroundColor: option.comingSoon ? "#E5E7EB" : `${option.color}20` }}
+                className="w-12 h-12 rounded-lg items-center justify-center"
+                style={{ backgroundColor: `${option.color}20` }}
               >
-                <Feather
-                  name={option.icon as any}
-                  size={24}
-                  color={option.comingSoon ? "#999" : option.color}
-                />
+                <Feather name={option.icon as any} size={24} color={option.color} />
               </View>
+
               <View className="flex-1">
-                <View className="flex-row items-center gap-2">
-                  <Text className="text-lg font-semibold text-dark-100">{option.name}</Text>
+                <View className="flex-row items-center gap-2 mb-1">
+                  <Text className="text-base font-bold text-dark-100">{option.name}</Text>
                   {option.comingSoon && (
-                    <View className="bg-gray-300 rounded px-2 py-1">
-                      <Text className="text-xs font-semibold text-gray-600">Coming soon</Text>
+                    <View className="bg-yellow-100 px-2 py-1 rounded">
+                      <Text className="text-xs font-semibold text-yellow-800">Coming Soon</Text>
                     </View>
                   )}
                 </View>
-                <Text className="text-sm text-gray-600 mt-1">{option.description}</Text>
+                <Text className="text-sm text-gray-600">{option.description}</Text>
               </View>
+
               {!option.comingSoon && (
-                <Feather name="chevron-right" size={20} color="#667eea" />
+                <Feather name="arrow-right" size={20} color="#6B7280" />
               )}
             </Pressable>
           ))}
         </View>
 
-        {/* Info Box */}
-        <View className="rounded-xl bg-blue-50 border border-blue-200 p-4 mb-8">
-          <Text className="text-xs font-semibold text-blue-900 mb-2">💡 About Imports</Text>
-          <Text className="text-xs text-blue-800 leading-5">
-            Importing transactions helps you track spending from multiple accounts. All imported
-            transactions are securely stored and categorized automatically based on merchant and
-            transaction type.
+        {/* Info Section */}
+        <View className="mt-auto pt-8 border-t border-gray-100">
+          <Text className="text-xs text-gray-500 text-center">
+            Your transactions are encrypted and secure. We never store your bank credentials.
           </Text>
         </View>
       </ScrollView>

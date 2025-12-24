@@ -16,7 +16,7 @@ export type Transaction = {
   currency?: string; // e.g., 'EUR', 'GBP', 'USD'
   excludeFromAnalytics?: boolean;
   isAnalyticsProtected?: boolean; // When true, excludeFromAnalytics cannot be toggled by user
-  source?: "revolut_import" | "manual" | "other_import"; // Where the transaction came from
+  source?: "revolut_import" | "aib_import" | "manual" | "other_import"; // Where the transaction came from
 };
 
 export type Summary = {

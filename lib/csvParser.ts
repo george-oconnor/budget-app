@@ -39,6 +39,22 @@ export type RevolutParseResult = {
   skippedDetails: SkippedRow[];
 };
 
+export interface AibTransaction {
+  date: string;
+  description: string;
+  amount: number;
+  currency: string;
+  balance: string;
+  product: string;
+}
+
+export type AibParseResult = {
+  transactions: AibTransaction[];
+  skipped: number;
+  totalRows: number;
+  skippedDetails: SkippedRow[];
+};
+
 export function parseRevolutCSV(csvContent: string): RevolutParseResult {
   const rawLines = csvContent.split('\n');
   const lines = rawLines.map(l => l.replace(/\r$/, ''));
@@ -283,4 +299,150 @@ export async function markTransfers(transactions: ParsedTransaction[]): Promise<
     }
     return tx;
   });
+}
+
+// AIB CSV format parser (tolerant to common formats). Expected columns include at least a date and either Amount or Debit/Credit.
+export function parseAibCSV(csvContent: string): AibParseResult {
+  const rawLines = csvContent.split('\n');
+  const lines = rawLines.map(l => l.replace(/\r$/, ''));
+
+  if (lines.length < 2) {
+    throw new Error('CSV file is empty or invalid');
+  }
+
+  const headerFields = parseCSVLine(lines[0].replace(/^\uFEFF/, ''));
+  const normalizedHeaders = headerFields.map(h => h.trim().toLowerCase());
+
+  const getColumnIndex = (aliases: string[]): number => {
+    for (const alias of aliases) {
+      const exactIdx = normalizedHeaders.findIndex(h => h === alias.toLowerCase());
+      if (exactIdx !== -1) return exactIdx;
+      const containsIdx = normalizedHeaders.findIndex(h => h.includes(alias.toLowerCase()));
+      if (containsIdx !== -1) return containsIdx;
+    }
+    return -1;
+  };
+
+  const dateIdx = getColumnIndex([
+    'date',
+    'transaction date',
+    'value date',
+    'posting date',
+    'posted date',
+    'posted transactions date',
+  ]);
+  const descIdx = getColumnIndex(['description', 'details', 'narrative', 'info', 'reference']);
+  const amountIdx = getColumnIndex(['amount', 'transaction amount']);
+  const debitIdx = getColumnIndex(['debit', 'withdrawal', 'debit amount', 'debit eur']);
+  const creditIdx = getColumnIndex(['credit', 'lodgement', 'credit amount', 'credit eur']);
+  const currencyIdx = getColumnIndex(['currency', 'ccy']);
+  const balanceIdx = getColumnIndex(['balance', 'running balance', 'balance eur']);
+  const productIdx = getColumnIndex(['account', 'account name', 'account type', 'account product']);
+
+  if (dateIdx === -1 || (amountIdx === -1 && debitIdx === -1 && creditIdx === -1)) {
+    throw new Error("CSV must contain date and amount (or debit/credit) columns");
+  }
+
+  const transactions: AibTransaction[] = [];
+  let skipped = 0;
+  const skippedDetails: SkippedRow[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) {
+      skipped++;
+      skippedDetails.push({ line: i + 1, reason: 'Empty line' });
+      continue;
+    }
+
+    const fields = parseCSVLine(line);
+    if (fields.length < 2) {
+      skipped++;
+      skippedDetails.push({ line: i + 1, reason: 'Not enough columns' });
+      continue;
+    }
+
+    try {
+      const rawDate = dateIdx >= 0 ? fields[dateIdx]?.trim() || '' : '';
+      const description = descIdx >= 0 ? fields[descIdx]?.trim() || '' : '';
+
+      let amount = 0;
+      if (amountIdx >= 0 && fields[amountIdx]) {
+        amount = parseFloat(fields[amountIdx].trim().replace(/,/g, ''));
+      } else {
+        const debit = debitIdx >= 0 ? parseFloat(fields[debitIdx]?.trim().replace(/,/g, '') || '0') : 0;
+        const credit = creditIdx >= 0 ? parseFloat(fields[creditIdx]?.trim().replace(/,/g, '') || '0') : 0;
+        if (!Number.isNaN(debit) && debit !== 0) amount = -Math.abs(debit);
+        else if (!Number.isNaN(credit) && credit !== 0) amount = Math.abs(credit);
+      }
+
+      if (Number.isNaN(amount)) {
+        skipped++;
+        skippedDetails.push({ line: i + 1, reason: 'Invalid amount' });
+        continue;
+      }
+
+      const currency = currencyIdx >= 0 ? fields[currencyIdx]?.trim() || 'EUR' : 'EUR';
+      const balance = balanceIdx >= 0 ? fields[balanceIdx]?.trim() || '' : '';
+      const product = productIdx >= 0 ? fields[productIdx]?.trim() || '' : 'AIB';
+
+      transactions.push({
+        date: rawDate,
+        description,
+        amount,
+        currency,
+        balance,
+        product,
+      });
+    } catch (e) {
+      skipped++;
+      skippedDetails.push({ line: i + 1, reason: 'Parse error' });
+      continue;
+    }
+  }
+
+  const totalRows = Math.max(0, lines.length - 1);
+  return { transactions, skipped, totalRows, skippedDetails };
+}
+
+export async function convertAibToAppTransaction(aib: AibTransaction): Promise<ParsedTransaction> {
+  const isExpense = aib.amount < 0;
+  const amountInCents = Math.round(Math.abs(aib.amount) * 100);
+
+  // AIB dates are typically DD/MM/YYYY or DD/MM/YY, parse them correctly
+  let date = new Date(NaN);
+  if (aib.date) {
+    const trimmed = aib.date.trim();
+    // Try DD/MM/YYYY or DD/MM/YY format (AIB standard)
+    const dateMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (dateMatch) {
+      const [, day, month, year] = dateMatch;
+      // Handle 2-digit year: assume 20xx for 00-99
+      const fullYear = year.length === 2 ? 2000 + parseInt(year) : parseInt(year);
+      date = new Date(fullYear, parseInt(month) - 1, parseInt(day));
+    } else {
+      // Try ISO or other formats
+      const normalized = trimmed.replace(' ', 'T');
+      date = new Date(normalized);
+    }
+  }
+  
+  if (isNaN(date.getTime())) {
+    console.warn('Failed to parse AIB date:', aib.date, '- using current date as fallback');
+    date = new Date();
+  }
+
+  const title = aib.description || (isExpense ? 'Expense' : 'Income');
+  const subtitle = aib.product || 'AIB';
+  const categoryId = await categorizeTransaction(title, subtitle, isExpense);
+
+  return {
+    title,
+    subtitle,
+    amount: amountInCents,
+    kind: isExpense ? 'expense' : 'income',
+    date: date.toISOString(),
+    categoryId,
+    currency: aib.currency || 'EUR',
+  };
 }
