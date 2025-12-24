@@ -367,13 +367,23 @@ export function parseAibCSV(csvContent: string): AibParseResult {
       const description = descIdx >= 0 ? fields[descIdx]?.trim() || '' : '';
 
       let amount = 0;
-      if (amountIdx >= 0 && fields[amountIdx]) {
+      if (debitIdx >= 0 && fields[debitIdx] && fields[debitIdx].trim()) {
+        // Try debit column first (expense = negative)
+        const debit = parseFloat(fields[debitIdx].trim().replace(/,/g, ''));
+        if (!Number.isNaN(debit) && debit !== 0) {
+          amount = -Math.abs(debit);
+        }
+      }
+      if (amount === 0 && creditIdx >= 0 && fields[creditIdx] && fields[creditIdx].trim()) {
+        // If no debit, try credit column (income = positive)
+        const credit = parseFloat(fields[creditIdx].trim().replace(/,/g, ''));
+        if (!Number.isNaN(credit) && credit !== 0) {
+          amount = Math.abs(credit);
+        }
+      }
+      if (amount === 0 && amountIdx >= 0 && fields[amountIdx]) {
+        // Fall back to amount column if neither debit nor credit
         amount = parseFloat(fields[amountIdx].trim().replace(/,/g, ''));
-      } else {
-        const debit = debitIdx >= 0 ? parseFloat(fields[debitIdx]?.trim().replace(/,/g, '') || '0') : 0;
-        const credit = creditIdx >= 0 ? parseFloat(fields[creditIdx]?.trim().replace(/,/g, '') || '0') : 0;
-        if (!Number.isNaN(debit) && debit !== 0) amount = -Math.abs(debit);
-        else if (!Number.isNaN(credit) && credit !== 0) amount = Math.abs(credit);
       }
 
       if (Number.isNaN(amount)) {
