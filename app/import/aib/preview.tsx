@@ -31,18 +31,18 @@ interface Transaction {
   isAnalyticsProtected?: boolean;
 }
 
-// Helpers for robust deduping (normalize text, amount, and date to a stable key)
+// Helpers for robust deduping: normalize text and use date-only key to avoid timezone string mismatches
 const normalizeText = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
-const normalizeDateToISO = (value: string) => {
+const dateOnlyKey = (value: string) => {
   if (!value) return "";
-  const t = new Date(value).getTime();
-  if (Number.isNaN(t)) return (value || "").trim();
-  return new Date(t).toISOString();
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return (value || "").trim();
+  return new Date(time).toISOString().split("T")[0]; // YYYY-MM-DD
 };
 const makeKeyFromTransaction = (t: Transaction) =>
-  `${normalizeText(t.title)}|${Math.abs(t.amount)}|${t.kind}|${t.date}`;
+  `${normalizeText(t.title)}|${Math.abs(t.amount)}|${t.kind}|${dateOnlyKey(t.date)}`;
 const makeKeyFromDoc = (doc: any) =>
-  `${normalizeText(doc.title || "")}|${Math.abs(Number(doc.amount))}|${doc.kind}|${doc.date || ""}`;
+  `${normalizeText(doc.title || "")}|${Math.abs(Number(doc.amount))}|${doc.kind}|${dateOnlyKey(doc.date || "")}`;
 
 export default function ImportPreviewScreen() {
   const { user } = useSessionStore();
@@ -266,11 +266,18 @@ export default function ImportPreviewScreen() {
 
       // Update account balance if we have a final balance and account selection
       if (finalBalance !== undefined) {
-        const accountName = isCreatingNewAccount ? newAccountName : selectedAccountKey;
+        const selectedAcc = !isCreatingNewAccount
+          ? existingAibAccounts.find(a => a.key === selectedAccountKey)
+          : null;
+        const accountName = isCreatingNewAccount ? newAccountName : (selectedAcc?.name || "");
+        const accountKey = !isCreatingNewAccount ? selectedAccountKey || undefined : undefined;
+        const accountType = isCreatingNewAccount ? newAccountType : (selectedAcc?.type || undefined);
+
         if (accountName) {
           await updateAccountBalance(accountName, finalBalance, currency, {
             provider: "aib",
-            accountType: isCreatingNewAccount ? newAccountType : undefined,
+            accountType,
+            accountKey,
           });
           console.log(`Updated balance for ${accountName}: ${(finalBalance / 100).toFixed(2)} ${currency}`);
         }

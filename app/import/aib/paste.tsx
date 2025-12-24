@@ -49,6 +49,24 @@ export default function AibImportPasteScreen() {
   const [loading, setLoading] = useState(false);
   const { user } = useSessionStore();
 
+  // Robust AIB date parser: supports DD/MM/YYYY and DD/MM/YY
+  const parseAibDate = (raw: string | undefined): Date => {
+    if (!raw) return new Date(NaN);
+    const trimmed = raw.trim();
+    const m = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (m) {
+      const day = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10) - 1;
+      const y = m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
+      // Use UTC midnight to avoid TZ ordering issues
+      const d = new Date(Date.UTC(y, month, day, 0, 0, 0));
+      return d;
+    }
+    // Fallback: let Date try to parse
+    const normalized = trimmed.replace(' ', 'T');
+    return new Date(normalized);
+  };
+
   const handlePaste = async () => {
     try {
       const content = await Clipboard.getStringAsync();
@@ -114,16 +132,38 @@ export default function AibImportPasteScreen() {
         return;
       }
 
+      // Sort raw AIB transactions by parsed date to identify the most recent correctly
+      const sortedByDate = [...parseResult.transactions].sort((a, b) => {
+        const ta = parseAibDate(a.date).getTime();
+        const tb = parseAibDate(b.date).getTime();
+        return ta - tb;
+      });
+
       const convertedTransactions = await Promise.all(
         parseResult.transactions.map(convertAibToAppTransaction)
       );
 
       const transactionsWithTransfers = await markTransfers(convertedTransactions);
 
-      // Extract final balance from the last transaction (most recent) and currency
-      const finalAibTx = parseResult.transactions[parseResult.transactions.length - 1];
-      const finalBalance = finalAibTx?.balance ? parseFloat(finalAibTx.balance.toString().replace(/,/g, '')) * 100 : undefined;
-      const currency = parseResult.transactions[0]?.currency || 'EUR';
+      // Extract final balance from the most recent transaction that contains a balance
+      // Also take the currency from that same row (fallback to EUR)
+      let finalBalanceCents: number | undefined = undefined;
+      let currency: string = 'EUR';
+      for (let i = sortedByDate.length - 1; i >= 0; i--) {
+        const tx = sortedByDate[i];
+        const balStr = (tx.balance || '').toString().trim();
+        if (balStr.length > 0) {
+          const parsed = parseFloat(balStr.replace(/,/g, ''));
+          if (!Number.isNaN(parsed)) {
+            finalBalanceCents = Math.round(parsed * 100);
+            currency = tx.currency || currency;
+            break;
+          }
+        }
+        if (!currency && tx.currency) {
+          currency = tx.currency;
+        }
+      }
 
       parsedTransactionsCache = {
         transactions: transactionsWithTransfers,
@@ -131,7 +171,7 @@ export default function AibImportPasteScreen() {
         totalRows: parseResult.totalRows,
         skippedRows: parseResult.skipped,
         skippedDetails: parseResult.skippedDetails,
-        finalBalance: finalBalance ? Math.round(finalBalance) : undefined,
+        finalBalance: finalBalanceCents,
         currency,
       };
 
