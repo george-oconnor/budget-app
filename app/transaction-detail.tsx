@@ -573,6 +573,7 @@ export default function TransactionDetailScreen() {
         <View className="mb-6 p-4 rounded-2xl bg-gray-50">
           <Text className="text-gray-500 text-sm mb-2">Source</Text>
           <Text className="text-base font-semibold text-dark-100">
+            {transaction.source === "aib_import" && "AIB Import"}
             {transaction.source === "revolut_import" && "Revolut Import"}
             {transaction.source === "manual" && "Manual Entry"}
             {transaction.source === "other_import" && "Other Import"}
