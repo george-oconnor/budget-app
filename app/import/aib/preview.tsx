@@ -72,11 +72,21 @@ export default function ImportPreviewScreen() {
   const [newAccountType, setNewAccountType] = useState("Current");
   const [finalBalance, setFinalBalance] = useState<number | undefined>();
   const [currency, setCurrency] = useState<string>("EUR");
+  const [zeroAmountIndices, setZeroAmountIndices] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     const cached = getParsedTransactions();
     if (cached) {
       setTransactions(cached.transactions);
+      // Find transactions with zero amount
+      const zeroIndices = new Set<number>();
+      cached.transactions.forEach((tx, idx) => {
+        if (tx.amount === 0) {
+          zeroIndices.add(idx);
+        }
+      });
+      setZeroAmountIndices(zeroIndices);
+      
       setParseStats({
         totalRows: cached.totalRows,
         parsedRows: cached.parsedRows,
@@ -189,8 +199,12 @@ export default function ImportPreviewScreen() {
       const existing = await getAllTransactionsForUser(user.id);
       const existingKeys = new Set(existing.map(makeKeyFromDoc));
 
+      // Filter out transactions with zero amount and existing transactions
       const deduped: Transaction[] = [];
-      for (const t of transactions) {
+      for (let i = 0; i < transactions.length; i++) {
+        const t = transactions[i];
+        // Skip zero-amount transactions
+        if (zeroAmountIndices.has(i)) continue;
         const key = makeKeyFromTransaction(t);
         if (existingKeys.has(key)) continue;
         deduped.push(t);
@@ -275,21 +289,33 @@ export default function ImportPreviewScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: Transaction }) => {
+  const renderItem = ({ item, index }: { item: Transaction; index: number }) => {
     const isExpense = item.kind === "expense";
+    const isZeroAmount = zeroAmountIndices.has(index);
+    
     return (
-      <View className="rounded-2xl border border-gray-200 p-4 mb-3 bg-white">
+      <View className={`rounded-2xl border p-4 mb-3 ${isZeroAmount ? 'border-gray-300 bg-gray-50' : 'border-gray-200 bg-white'}`}>
         <View className="flex-row items-center justify-between mb-2">
-          <Text className="text-base font-semibold text-dark-100" numberOfLines={1}>{item.title || "Transaction"}</Text>
-          <Text className={`text-base font-bold ${isExpense ? "text-red-500" : "text-green-600"}`}>
+          <View className="flex-1 flex-row items-center gap-2">
+            <Text className={`text-base font-semibold flex-1 ${isZeroAmount ? 'text-gray-400' : 'text-dark-100'}`} numberOfLines={1}>{item.title || "Transaction"}</Text>
+            {isZeroAmount && (
+              <View className="bg-yellow-100 px-2 py-1 rounded">
+                <Text className="text-xs font-semibold text-yellow-800">Skipped</Text>
+              </View>
+            )}
+          </View>
+          <Text className={`text-base font-bold ${isZeroAmount ? 'text-gray-400' : isExpense ? "text-red-500" : "text-green-600"}`}>
             {isExpense ? "-" : "+"}{(item.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {item.currency}
           </Text>
         </View>
-        <Text className="text-sm text-gray-500" numberOfLines={1}>{item.subtitle || item.categoryId}</Text>
+        <Text className={`text-sm ${isZeroAmount ? 'text-gray-400' : 'text-gray-500'}`} numberOfLines={1}>{item.subtitle || item.categoryId}</Text>
         <View className="flex-row justify-between items-center mt-2">
-          <Text className="text-xs text-gray-500">{new Date(item.date).toLocaleDateString()}</Text>
-          <Text className="text-xs text-gray-500">{item.categoryId}</Text>
+          <Text className={`text-xs ${isZeroAmount ? 'text-gray-400' : 'text-gray-500'}`}>{new Date(item.date).toLocaleDateString()}</Text>
+          <Text className={`text-xs ${isZeroAmount ? 'text-gray-400' : 'text-gray-500'}`}>{item.categoryId}</Text>
         </View>
+        {isZeroAmount && (
+          <Text className="text-xs text-yellow-700 mt-2">Zero amount transactions will not be imported</Text>
+        )}
       </View>
     );
   };
