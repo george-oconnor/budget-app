@@ -23,6 +23,9 @@ export interface QueuedTransaction {
   excludeFromAnalytics?: boolean;
   isAnalyticsProtected?: boolean;
   source?: "revolut_import" | "aib_import" | "manual" | "other_import";
+  displayName?: string;
+  account?: string;
+  matchedTransferId?: string;
 }
 
 const SYNC_QUEUE_KEY = 'budget_app_sync_queue';
@@ -63,6 +66,9 @@ export async function queueTransactionsForSync(
     categoryId: string;
     currency: string;
     source?: "revolut_import" | "aib_import" | "manual" | "other_import";
+    displayName?: string;
+    account?: string;
+    matchedTransferId?: string;
   }[]
 ): Promise<QueuedTransaction[]> {
   try {
@@ -96,6 +102,25 @@ export async function getQueuedTransactions(): Promise<QueuedTransaction[]> {
   } catch (error) {
     console.error('Error reading sync queue:', error);
     return [];
+  }
+}
+
+/**
+ * Update specific queued transactions (e.g., to set matchedTransferId)
+ */
+export async function updateQueuedTransactions(
+  updates: Array<{ id: string; updates: Partial<QueuedTransaction> }>
+): Promise<void> {
+  try {
+    const queue = await getQueuedTransactions();
+    const updatedQueue = queue.map(tx => {
+      const update = updates.find(u => u.id === tx.id);
+      return update ? { ...tx, ...update.updates } : tx;
+    });
+    await AsyncStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(updatedQueue));
+  } catch (error) {
+    console.error('Error updating queued transactions:', error);
+    throw error;
   }
 }
 
@@ -466,8 +491,15 @@ export async function startSyncingTransactions(
       }
     }
 
-    // Clean up completed transactions from the queue
-    await clearCompletedTransactions();
+    // Don't auto-clear completed transactions - let them be filtered naturally by the UI
+    // when it detects they exist in the database. This prevents race conditions where
+    // transactions disappear before the UI has refreshed to show them from the database.
+    // However, clear them after a delay to prevent stale queue data from persisting forever
+    setTimeout(() => {
+      clearCompletedTransactions().catch(err => 
+        console.error('Error clearing completed transactions after sync:', err)
+      );
+    }, 2000); // Wait 2 seconds for UI to refresh from database before clearing
 
     // Update final status
     // Calculate how many are still pending/failed after sync

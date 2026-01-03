@@ -1,10 +1,9 @@
+import { batchCategorizeTransactions } from "@/lib/categorization";
 import {
     AibParseResult,
-    convertAibToAppTransaction,
-    markTransfers,
     parseAibCSV,
     ParsedTransaction,
-    SkippedRow,
+    SkippedRow
 } from "@/lib/csvParser";
 import { useSessionStore } from "@/store/useSessionStore";
 import { Feather } from "@expo/vector-icons";
@@ -122,9 +121,14 @@ export default function AibImportPasteScreen() {
 
     setLoading(true);
     try {
+      console.log('=== AIB CSV Processing Started ===');
+      const startTotal = Date.now();
+
+      console.log('Step 1: Parsing CSV...');
+      const parseStart = Date.now();
       const transactions = parseAibCSV(csvContent);
       const parseResult: AibParseResult = transactions;
-      console.log(`Parsed ${parseResult.transactions.length} transactions from AIB CSV`);
+      console.log(`Step 1 complete: Parsed ${parseResult.transactions.length} transactions in ${Date.now() - parseStart}ms`);
 
       if (parseResult.transactions.length === 0) {
         Alert.alert("Error", "No transactions found in the CSV data");
@@ -133,20 +137,84 @@ export default function AibImportPasteScreen() {
       }
 
       // Sort raw AIB transactions by parsed date to identify the most recent correctly
+      console.log('Step 2: Sorting by date...');
+      const sortStart = Date.now();
       const sortedByDate = [...parseResult.transactions].sort((a, b) => {
         const ta = parseAibDate(a.date).getTime();
         const tb = parseAibDate(b.date).getTime();
         return ta - tb;
       });
+      console.log(`Step 2 complete: Sorted in ${Date.now() - sortStart}ms`);
 
-      const convertedTransactions = await Promise.all(
-        parseResult.transactions.map(convertAibToAppTransaction)
+      console.log('Step 3: Converting transactions...');
+      const convertStart = Date.now();
+      
+      // Batch categorize all transactions at once (single DB call)
+      const categorizationStart = Date.now();
+      const categoryIds = await batchCategorizeTransactions(
+        parseResult.transactions.map(aib => ({
+          title: aib.description || '',
+          subtitle: aib.product || 'AIB',
+          kind: aib.amount < 0 ? 'expense' as const : 'income' as const
+        }))
       );
+      console.log(`  Categorization complete in ${Date.now() - categorizationStart}ms`);
+      
+      // Convert transactions synchronously with pre-fetched categories
+      const conversionStart = Date.now();
+      const convertedTransactions: ParsedTransaction[] = parseResult.transactions.map((aib, idx) => {
+        const isExpense = aib.amount < 0;
+        const amountInCents = Math.round(Math.abs(aib.amount) * 100);
 
-      const transactionsWithTransfers = await markTransfers(convertedTransactions);
+        let date = new Date(NaN);
+        if (aib.date) {
+          date = parseAibDate(aib.date);
+        }
+        
+        if (isNaN(date.getTime())) {
+          console.warn('Failed to parse AIB date:', aib.date, '- using current date as fallback');
+          date = new Date();
+        }
+
+        const title = aib.description || (isExpense ? 'Expense' : 'Income');
+        const subtitle = aib.product || 'AIB';
+
+        // Clean up displayName by removing AIB-specific prefixes (repeatedly)
+        let cleanDisplayName = title;
+        let previousDisplayName = '';
+        while (cleanDisplayName !== previousDisplayName) {
+          previousDisplayName = cleanDisplayName;
+          cleanDisplayName = cleanDisplayName
+            .replace(/^TST-\s*/i, '')
+            .replace(/^D\/D\s*/i, '')
+            .replace(/^VDP-\s*/i, '')
+            .replace(/^VDC-\s*/i, '')
+            .trim();
+        }
+        // Remove masked card numbers and trailing asterisks
+        cleanDisplayName = cleanDisplayName
+          .replace(/\*{2}\d{4}\s*/g, '')
+          .replace(/\*+$/, '')
+          .trim();
+
+        return {
+          title,
+          subtitle,
+          amount: amountInCents,
+          kind: isExpense ? 'expense' : 'income',
+          date: date.toISOString(),
+          categoryId: categoryIds[idx],
+          currency: aib.currency || 'EUR',
+          displayName: cleanDisplayName || title,
+        };
+      });
+      console.log(`  Conversion complete in ${Date.now() - conversionStart}ms`);
+      console.log(`Step 3 complete: Converted ${convertedTransactions.length} transactions in ${Date.now() - convertStart}ms`);
 
       // Extract final balance from the most recent transaction that contains a balance
       // Also take the currency from that same row (fallback to EUR)
+      console.log('Step 4: Extracting balance...');
+      const balanceStart = Date.now();
       let finalBalanceCents: number | undefined = undefined;
       let currency: string = 'EUR';
       for (let i = sortedByDate.length - 1; i >= 0; i--) {
@@ -164,9 +232,12 @@ export default function AibImportPasteScreen() {
           currency = tx.currency;
         }
       }
+      console.log(`Step 4 complete: Balance extraction in ${Date.now() - balanceStart}ms`);
 
+      console.log('Step 5: Caching transactions...');
+      const cacheStart = Date.now();
       parsedTransactionsCache = {
-        transactions: transactionsWithTransfers,
+        transactions: convertedTransactions,
         parsedRows: parseResult.transactions.length,
         totalRows: parseResult.totalRows,
         skippedRows: parseResult.skipped,
@@ -174,8 +245,16 @@ export default function AibImportPasteScreen() {
         finalBalance: finalBalanceCents,
         currency,
       };
+      console.log(`Step 5 complete: Cached in ${Date.now() - cacheStart}ms`);
 
-      router.push("/import/aib/preview" as any);
+      console.log('Step 6: Navigating to select-account...');
+      const navStart = Date.now();
+      router.push({
+        pathname: "/import/aib/select-account" as any,
+        params: { transactionCount: parseResult.transactions.length },
+      });
+      console.log(`Step 6 complete: Navigation triggered in ${Date.now() - navStart}ms`);
+      console.log(`=== Total processing time: ${Date.now() - startTotal}ms ===`);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to parse CSV";
       Alert.alert("Parse Error", errorMsg);
@@ -199,9 +278,9 @@ export default function AibImportPasteScreen() {
           >
             <Text className="text-primary text-base">← Back</Text>
           </Pressable>
-          <Text className="text-3xl font-bold text-dark-100">Paste AIB CSV</Text>
+          <Text className="text-3xl font-bold text-dark-100">Upload AIB CSV</Text>
           <Text className="text-sm text-gray-500 mt-2">
-            Copy the CSV from AIB online banking and paste it below
+            Select the CSV file you exported from AIB online banking
           </Text>
         </View>
 
@@ -212,40 +291,23 @@ export default function AibImportPasteScreen() {
             In AIB: Accounts → Select Account → Statements/Download → Choose Date Range → CSV
           </Text>
           <Text className="text-xs text-blue-700 font-semibold">
-            Then tap the "Paste CSV" button below
+            Download the file, then tap "Upload CSV" below
           </Text>
         </View>
-
-        {/* Paste Button */}
-        <Pressable
-          onPress={handlePaste}
-          disabled={loading}
-          className="rounded-xl bg-white border-2 border-sky-500 p-6 mb-6 active:opacity-80"
-        >
-          <View className="items-center gap-3">
-            <View className="w-16 h-16 rounded-full bg-sky-100 items-center justify-center">
-              <Feather name="clipboard" size={28} color="#0EA5E9" />
-            </View>
-            <Text className="text-base font-bold text-sky-600">Paste CSV from Clipboard</Text>
-            <Text className="text-xs text-gray-500 text-center">
-              Copy CSV from AIB, then tap here to paste
-            </Text>
-          </View>
-        </Pressable>
 
         {/* File Upload Button */}
         <Pressable
           onPress={handlePickFile}
           disabled={loading}
-          className="rounded-xl bg-white border-2 border-gray-200 p-6 mb-6 active:opacity-80"
+          className="rounded-xl bg-white border-2 border-sky-500 p-6 mb-6 active:opacity-80"
         >
           <View className="items-center gap-3">
-            <View className="w-16 h-16 rounded-full bg-gray-100 items-center justify-center">
-              <Feather name="upload" size={28} color="#4B5563" />
+            <View className="w-16 h-16 rounded-full bg-sky-100 items-center justify-center">
+              <Feather name="upload" size={28} color="#0EA5E9" />
             </View>
-            <Text className="text-base font-bold text-gray-800">Upload CSV file</Text>
+            <Text className="text-base font-bold text-sky-600">Upload CSV File</Text>
             <Text className="text-xs text-gray-500 text-center">
-              Pick an AIB CSV from Files if you prefer not to paste
+              Select the AIB CSV file from your device
             </Text>
           </View>
         </Pressable>

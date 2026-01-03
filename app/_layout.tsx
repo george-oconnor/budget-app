@@ -40,7 +40,7 @@ export default function RootLayout() {
         
         if (userId && secret) {
           router.push({
-            pathname: '/reset-password',
+            pathname: '/auth/reset-password',
             params: { userId, secret }
           } as any);
         }

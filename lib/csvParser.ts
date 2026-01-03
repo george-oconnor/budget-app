@@ -28,6 +28,7 @@ export interface ParsedTransaction {
   currency: string; // e.g., 'EUR', 'GBP', 'USD'
   excludeFromAnalytics?: boolean;
   isAnalyticsProtected?: boolean; // When true, user cannot toggle excludeFromAnalytics
+  displayName?: string; // How the transaction appears to the user; defaults to title
 }
 
 export type SkippedRow = { line: number; reason: string };
@@ -188,6 +189,7 @@ export async function convertRevolutToAppTransaction(
     date: date.toISOString(),
     categoryId,
     currency: revolut.currency || 'EUR',
+    displayName: title || (isExpense ? 'Expense' : 'Income'),
   };
 }
 
@@ -273,6 +275,159 @@ export function detectTransferPairs(transactions: ParsedTransaction[]): Set<numb
   });
   
   return transferIndices;
+}
+
+/**
+ * Detect AIB internal transfers by matching new transactions against existing database transactions
+ * Matching criteria for AIB:
+ * - Title contains "*MOBI" 
+ * - Same date (no timestamp precision)
+ * - Same amount
+ * Each matched pair is only matched once (transaction can't be matched twice)
+ * Returns: { newIndices: Set of indices in new transactions, existingIndices: Set of indices in existing transactions }
+ */
+export function detectAibTransfers(
+  newTransactions: ParsedTransaction[],
+  existingTransactions: ParsedTransaction[]
+): { newIndices: Set<number>; existingIndices: Set<number>; pairs: Array<{ newIndex: number; existingIndex: number }> } {
+  const newTransferIndices = new Set<number>();
+  const existingTransferIndices = new Set<number>();
+  const matchedExistingIndices = new Set<number>();
+  const pairs: Array<{ newIndex: number; existingIndex: number }> = [];
+  
+  // Count *MOBI transactions for diagnostic
+  const newMobiCount = newTransactions.filter(t => t.title.includes("*MOBI")).length;
+  const existingMobiCount = existingTransactions.filter(t => t.title.includes("*MOBI")).length;
+  console.log(`AIB transfer detection: ${newMobiCount} *MOBI in new, ${existingMobiCount} *MOBI in existing`);
+  
+  // For each new transaction that has "*MOBI" in the title
+  newTransactions.forEach((newTx, newIndex) => {
+    if (!newTx.title.includes("*MOBI")) {
+      return;
+    }
+    
+    // Get the date (without time)
+    const newDate = new Date(newTx.date).toISOString().split('T')[0];
+    console.log(`  Checking new *MOBI: ${newTx.title} ${newTx.kind} ${newTx.amount} ${newDate} currency=${newTx.currency}`);
+    
+    // Look for matching existing transaction
+    for (let existingIndex = 0; existingIndex < existingTransactions.length; existingIndex++) {
+      // Skip if already matched
+      if (matchedExistingIndices.has(existingIndex)) {
+        continue;
+      }
+      
+      const existingTx = existingTransactions[existingIndex];
+      
+      // BOTH transactions must have "*MOBI" for AIB internal transfer
+      if (!existingTx.title.includes("*MOBI")) {
+        continue;
+      }
+      
+      const existingDate = new Date(existingTx.date).toISOString().split('T')[0];
+      
+      // Log potential candidate
+      const dateMatch = newDate === existingDate;
+      const amountMatch = Math.abs(newTx.amount) === Math.abs(existingTx.amount);
+      const currencyMatch = newTx.currency === existingTx.currency;
+      const kindMatch = newTx.kind !== existingTx.kind;
+      
+      if (dateMatch && amountMatch && kindMatch) {
+        console.log(`    → Candidate: ${existingTx.title} ${existingTx.kind} ${existingTx.amount} ${existingDate} currency=${existingTx.currency} | date=${dateMatch} amt=${amountMatch} curr=${currencyMatch} kind=${kindMatch}`);
+      }
+      
+      // Check matching criteria:
+      // 1. Same date
+      // 2. Same amount (absolute value)
+      // 3. Opposite kind (one income, one expense)
+      // 4. Same currency
+      if (
+        newDate === existingDate &&
+        Math.abs(newTx.amount) === Math.abs(existingTx.amount) &&
+        newTx.currency === existingTx.currency &&
+        newTx.kind !== existingTx.kind
+      ) {
+        // Found a match - mark both as transfers
+        console.log(`    ✓ MATCHED!`);
+        newTransferIndices.add(newIndex);
+        existingTransferIndices.add(existingIndex);
+        matchedExistingIndices.add(existingIndex);
+        pairs.push({ newIndex, existingIndex });
+        break; // This new transaction is matched, move to next
+      }
+    }
+
+    // If no match found, emit a concise debug line with probable causes
+    if (!newTransferIndices.has(newIndex)) {
+      console.log(`    ✗ No match found for this *MOBI transaction`);
+    }
+  });
+  
+  return { newIndices: newTransferIndices, existingIndices: existingTransferIndices, pairs };
+}
+
+/**
+ * Detect cross-bank transfers between new and existing transactions from different sources
+ * (e.g., AIB to Revolut or Revolut to AIB)
+ * Matching criteria:
+ * - Same date (within 4 days to account for processing delays)
+ * - Same amount (absolute value)
+ * - Same currency
+ * - Opposite kind (one income, one expense)
+ * - Different sources (one aib_import, one revolut_import)
+ * Returns: { newIndices: Set of indices in new transactions, existingIndices: Set of indices in existing transactions }
+ */
+export function detectCrossBankTransfers(
+  newTransactions: ParsedTransaction[],
+  existingTransactions: ParsedTransaction[],
+  newSource: 'aib_import' | 'revolut_import',
+  existingSource: 'aib_import' | 'revolut_import'
+): { newIndices: Set<number>; existingIndices: Set<number>; pairs: Array<{ newIndex: number; existingIndex: number }> } {
+  const newTransferIndices = new Set<number>();
+  const existingTransferIndices = new Set<number>();
+  const matchedExistingIndices = new Set<number>();
+  const pairs: Array<{ newIndex: number; existingIndex: number }> = [];
+  
+  // For each new transaction
+  newTransactions.forEach((newTx, newIndex) => {
+    const newDate = new Date(newTx.date).toISOString().split('T')[0];
+    const newDateTime = new Date(newTx.date).getTime();
+    
+    // Look for matching existing transaction from different bank
+    for (let existingIndex = 0; existingIndex < existingTransactions.length; existingIndex++) {
+      // Skip if already matched
+      if (matchedExistingIndices.has(existingIndex)) {
+        continue;
+      }
+      
+      const existingTx = existingTransactions[existingIndex];
+      const existingDate = new Date(existingTx.date).toISOString().split('T')[0];
+      const existingDateTime = new Date(existingTx.date).getTime();
+      
+      // Check matching criteria:
+      // 1. Same date (within 4 days for processing delays)
+      const daysDiff = Math.abs(newDateTime - existingDateTime) / (1000 * 60 * 60 * 24);
+      if (daysDiff > 4) continue;
+      
+      // 2. Same amount (absolute value)
+      if (Math.abs(newTx.amount) !== Math.abs(existingTx.amount)) continue;
+      
+      // 3. Same currency
+      if (newTx.currency !== existingTx.currency) continue;
+      
+      // 4. Opposite kind (one income, one expense)
+      if (newTx.kind === existingTx.kind) continue;
+      
+      // Found a cross-bank transfer match
+      newTransferIndices.add(newIndex);
+      existingTransferIndices.add(existingIndex);
+      matchedExistingIndices.add(existingIndex);
+      pairs.push({ newIndex, existingIndex });
+      break; // This new transaction is matched, move to next
+    }
+  });
+  
+  return { newIndices: newTransferIndices, existingIndices: existingTransferIndices, pairs };
 }
 
 /**
@@ -446,6 +601,16 @@ export async function convertAibToAppTransaction(aib: AibTransaction): Promise<P
   const subtitle = aib.product || 'AIB';
   const categoryId = await categorizeTransaction(title, subtitle, isExpense);
 
+  // Clean up displayName by removing AIB-specific prefixes and masked card numbers
+  const cleanDisplayName = title
+    .replace(/^TST-\s*/i, '') // Remove "TST-" prefix
+    .replace(/^D\/D\s*/i, '') // Remove leading "D/D" prefix
+    .replace(/^VDP-\s*/i, '') // Remove "VDP-" prefix
+    .replace(/^VDC-\s*/i, '') // Remove "VDC-" prefix
+    .replace(/\*{2}\d{4}\s*/g, '') // Remove "**XXXX" card masking
+    .replace(/\*+$/, '') // Remove trailing asterisks
+    .trim(); // Remove leading and trailing whitespace
+
   return {
     title,
     subtitle,
@@ -454,5 +619,6 @@ export async function convertAibToAppTransaction(aib: AibTransaction): Promise<P
     date: date.toISOString(),
     categoryId,
     currency: aib.currency || 'EUR',
+    displayName: cleanDisplayName || title,
   };
 }

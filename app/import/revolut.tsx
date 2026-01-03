@@ -115,6 +115,33 @@ export default function RevolutImportScreen() {
           </View>
         </View>
 
+        {/* Important Warning */}
+        <View className="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-8">
+          <Text className="text-xs font-semibold text-amber-900 mb-3">⚠️ Important: After Opening Revolut</Text>
+          <View className="gap-2">
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">1.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Go to Accounts → Select account → Statements</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">2.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Choose your date range</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">3.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Tap Generate statement</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">4.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Select CSV format → Get statement</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">5.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Return to this app to import</Text>
+            </View>
+          </View>
+        </View>
+
         {/* Tutorial Steps */}
         <View className="gap-4 mb-8">
           {TUTORIAL_STEPS.map((item) => (
@@ -144,27 +171,6 @@ export default function RevolutImportScreen() {
               </View>
             </Pressable>
           ))}
-        </View>
-
-        {/* What You'll Need */}
-        <View className="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-8">
-          <Text className="text-xs font-semibold text-amber-900 mb-3">📋 What You'll Need</Text>
-          <View className="gap-2">
-            <View className="flex-row gap-2">
-              <Text className="text-amber-900">•</Text>
-              <Text className="text-sm text-amber-800 flex-1">Access to your Revolut account</Text>
-            </View>
-            <View className="flex-row gap-2">
-              <Text className="text-amber-900">•</Text>
-              <Text className="text-sm text-amber-800 flex-1">
-                Transaction history (CSV export from Revolut)
-              </Text>
-            </View>
-            <View className="flex-row gap-2">
-              <Text className="text-amber-900">•</Text>
-              <Text className="text-sm text-amber-800 flex-1">A few minutes of your time</Text>
-            </View>
-          </View>
         </View>
 
         {/* Info Box */}

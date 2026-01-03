@@ -1,5 +1,6 @@
-import { getAllTransactionsForUser } from "@/lib/appwrite";
-import { detectTransferPairs, markTransfers } from "@/lib/csvParser";
+import { getAllTransactionsForUser, updateTransaction } from "@/lib/appwrite";
+import { getTransferCategoryId } from "@/lib/categorization";
+import { detectCrossBankTransfers, detectTransferPairs } from "@/lib/csvParser";
 import { queueTransactionsForSync } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
@@ -27,6 +28,7 @@ interface Transaction {
   currency: string;
   excludeFromAnalytics?: boolean;
   isAnalyticsProtected?: boolean;
+  account?: string;
 }
 
 // Helpers for robust deduping (normalize text, amount, and date to a stable key)
@@ -163,7 +165,7 @@ export default function ImportPreviewScreen() {
       const combinedForDetection = [...existingAsTransactions, ...deduped];
       const transferIndicesInCombined = detectTransferPairs(combinedForDetection);
       
-      // Determine which new transactions are transfers
+      // Determine which new transactions are transfers (matched with existing)
       const existingCount = existingAsTransactions.length;
       const transferIndicesInNew = new Set<number>();
       transferIndicesInCombined.forEach(idx => {
@@ -172,15 +174,74 @@ export default function ImportPreviewScreen() {
         }
       });
       
-      // Mark the new transactions that are transfers
-      const dedupedWithTransfers = await markTransfers(deduped);
+      // Detect cross-bank transfers (Revolut ↔ AIB) - don't call markTransfers on Revolut transactions
+      // Revolut transfers are just regular income/expense, not internal pairs
+      const existingAibTransactions = existingAsTransactions.filter((_, idx) => {
+        const doc = existing[idx];
+        return doc.source === 'aib_import';
+      });
+      const aibIndicesMap = new Map<number, number>();
+      let aibMappedIndex = 0;
+      existingAsTransactions.forEach((tx, idx) => {
+        const doc = existing[idx];
+        if (doc.source === 'aib_import') {
+          aibIndicesMap.set(aibMappedIndex++, idx);
+        }
+      });
+      
+      const crossBankResult = detectCrossBankTransfers(
+        deduped,
+        existingAibTransactions,
+        'revolut_import',
+        'aib_import'
+      );
+      
+      // Get transfer category id for cross-bank matches
+      const transferCategoryId = await getTransferCategoryId();
+      
+      // Combine internal and cross-bank transfer indices
+      const allTransferIndicesInNew = new Set([...transferIndicesInNew, ...crossBankResult.newIndices]);
+      const crossBankExistingIndices = new Set<number>();
+      crossBankResult.existingIndices.forEach(idx => {
+        const originalIdx = aibIndicesMap.get(idx);
+        if (originalIdx !== undefined) {
+          crossBankExistingIndices.add(originalIdx);
+        }
+      });
+      
+      // Mark the new transactions that are cross-bank transfers (matched with AIB)
+      const dedupedWithTransfers = deduped.map((tx, idx) => {
+        if (transferIndicesInNew.has(idx)) {
+          return {
+            ...tx,
+            categoryId: transferCategoryId,
+            excludeFromAnalytics: true,
+            isAnalyticsProtected: true,
+          };
+        }
+        return tx;
+      });
+      
+      // Update existing transactions identified as cross-bank transfers
+      const existingTransactionsArray = existing;
+      for (const existingIdx of crossBankExistingIndices) {
+        if (existingIdx < existingTransactionsArray.length) {
+          const existingTx = existingTransactionsArray[existingIdx];
+          await updateTransaction(existingTx.$id, {
+            categoryId: transferCategoryId,
+            excludeFromAnalytics: true,
+            isAnalyticsProtected: true,
+          });
+        }
+      }
       
       // Override with detected transfers from cross-checking
       const finalTransactions = dedupedWithTransfers.map((tx, idx) => {
-        if (transferIndicesInNew.has(idx) && !tx.isAnalyticsProtected) {
+        if (allTransferIndicesInNew.has(idx) && !tx.isAnalyticsProtected) {
           // This transaction pairs with an existing one
           return {
             ...tx,
+            categoryId: transferCategoryId,
             excludeFromAnalytics: true,
             isAnalyticsProtected: true,
           };
@@ -194,9 +255,15 @@ export default function ImportPreviewScreen() {
       setImportProgress({ current: 0, total: finalTransactions.length });
 
       // Queue transactions locally instead of uploading immediately
+      // Use the account name resolved from each transaction (Revolut Current, Pocket, Vault, etc.)
       await queueTransactionsForSync(
         user.id, 
-        finalTransactions.map(tx => ({ ...tx, source: "revolut_import" as const }))
+        finalTransactions.map(tx => ({ 
+          ...tx, 
+          source: "revolut_import" as const,
+          displayName: tx.displayName || tx.title, // Explicitly ensure displayName is set
+          account: tx.account, // Use the account resolved from transaction details
+        }))
       );
 
       console.log(`Queued ${finalTransactions.length} transactions for sync`);

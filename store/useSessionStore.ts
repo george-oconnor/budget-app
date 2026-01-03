@@ -1,8 +1,7 @@
+import { createAccount, createUserProfile, getCurrentSession, getCurrentUser, signIn, signOut } from "@/lib/appwrite";
+import { captureException, clearUser as clearSentryUser, setUser as setSentryUser } from "@/lib/sentry";
 import type { SessionState } from "@/types/type";
 import { create } from "zustand";
-import { getCurrentUser, getCurrentSession, signIn, signOut, createAccount, createUserProfile } from "@/lib/appwrite";
-import { setUser as setSentryUser, clearUser as clearSentryUser } from "@/lib/sentry";
-import { captureException } from "@/lib/sentry";
 
 export const useSessionStore = create<SessionState>((set) => ({
   user: null,
@@ -13,13 +12,20 @@ export const useSessionStore = create<SessionState>((set) => ({
   checkSession: async () => {
     set({ status: "loading" });
     try {
-      const [user, session] = await Promise.all([getCurrentUser(), getCurrentSession()]);
-      if (user && session) {
+      const session = await getCurrentSession();
+      if (!session) {
+        set({ user: null, token: null, status: "unauthenticated", error: null });
+        return;
+      }
+
+      const user = await getCurrentUser();
+      if (user) {
         setSentryUser({ id: user.$id, email: user.email, username: user.name });
         set({ user: { id: user.$id, email: user.email, name: user.name }, token: session.$id, status: "authenticated", error: null });
-      } else {
-        set({ user: null, token: null, status: "unauthenticated", error: null });
+        return;
       }
+
+      set({ user: null, token: null, status: "unauthenticated", error: null });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to check session";
       captureException(err instanceof Error ? err : new Error(errorMsg));
@@ -44,23 +50,24 @@ export const useSessionStore = create<SessionState>((set) => ({
     }
   },
 
-  signup: async (email: string, password: string, name: string) => {
+  signup: async (email: string, password: string, firstName: string, lastName: string) => {
     set({ status: "loading", error: null });
     try {
-      const authUser = await createAccount(email, password, name);
+      const fullName = `${firstName} ${lastName}`.trim();
+      const authUser = await createAccount(email, password, fullName);
       await signIn(email, password);
       
       // Create user profile in users table
-      await createUserProfile(authUser.$id, email, name);
+      await createUserProfile(authUser.$id, email, firstName, lastName);
       
       const user = await getCurrentUser();
       if (user) {
-        setSentryUser({ id: user.$id, email: user.email, username: user.name });
-        set({ user: { id: user.$id, email: user.email, name: user.name }, token: user.$id, status: "authenticated", error: null });
+        setSentryUser({ id: user.$id, email: user.email, username: fullName });
+        set({ user: { id: user.$id, email: user.email, name: fullName, firstName, lastName }, token: user.$id, status: "authenticated", error: null });
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Signup failed";
-      captureException(err instanceof Error ? err : new Error(errorMsg), { email, name });
+      captureException(err instanceof Error ? err : new Error(errorMsg), { email, firstName, lastName });
       set({ status: "error", error: errorMsg });
       throw err;
     }

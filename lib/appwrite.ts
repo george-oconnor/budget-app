@@ -66,6 +66,12 @@ export async function getCurrentUser() {
     }
     return user;
   } catch (err) {
+    // Appwrite throws for guests with no session; treat that as "no user" without logging an error
+    const code = (err as any)?.code;
+    if (code === 401 || (err as any)?.message?.includes("missing scopes")) {
+      return null;
+    }
+
     console.error("getCurrentUser error:", err);
     return null;
   }
@@ -167,6 +173,8 @@ export type TransactionDoc = {
   kind: "income" | "expense";
   categoryId: string;
   date: string; // ISO timestamp
+  account?: string; // Which account this transaction relates to
+  matchedTransferId?: string; // Linked transaction for internal transfers
 };
 
 export type CategoryDoc = {
@@ -498,7 +506,10 @@ export async function createTransaction(
   customId?: string, // Optional custom ID to prevent duplicates
   excludeFromAnalytics?: boolean,
   isAnalyticsProtected?: boolean,
-  source?: "revolut_import" | "manual" | "other_import"
+  source?: "revolut_import" | "manual" | "other_import",
+  displayName?: string, // How the transaction appears to the user; defaults to title if not provided
+  account?: string, // Which account this transaction relates to
+  matchedTransferId?: string // Linked transaction for internal transfers
 ) {
   if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
   
@@ -511,6 +522,7 @@ export async function createTransaction(
     categoryId,
     date,
     currency,
+    displayName: displayName || title, // Always ensure displayName is set; default to title if missing
   };
   
   if (excludeFromAnalytics !== undefined) {
@@ -525,10 +537,60 @@ export async function createTransaction(
     data.source = source;
   }
   
+  if (account !== undefined) {
+    data.account = account;
+  }
+
+  if (matchedTransferId !== undefined) {
+    data.matchedTransferId = matchedTransferId;
+  }
+  
   return await databases.createDocument(
     databaseId, 
     transactionsTableId, 
     customId || ID.unique(), // Use custom ID if provided, otherwise generate
+    data
+  );
+}
+
+export async function updateTransaction(
+  transactionId: string,
+  updates: {
+    excludeFromAnalytics?: boolean;
+    isAnalyticsProtected?: boolean;
+    categoryId?: string;
+    displayName?: string;
+    matchedTransferId?: string;
+  }
+) {
+  if (!databaseId || !transactionsTableId) throw new Error("Appwrite env not configured");
+  
+  const data: any = {};
+  
+  if (updates.excludeFromAnalytics !== undefined) {
+    data.excludeFromAnalytics = updates.excludeFromAnalytics;
+  }
+  
+  if (updates.isAnalyticsProtected !== undefined) {
+    data.isAnalyticsProtected = updates.isAnalyticsProtected;
+  }
+  
+  if (updates.categoryId !== undefined) {
+    data.categoryId = updates.categoryId;
+  }
+  
+  if (updates.displayName !== undefined) {
+    data.displayName = updates.displayName;
+  }
+
+  if (updates.matchedTransferId !== undefined) {
+    data.matchedTransferId = updates.matchedTransferId;
+  }
+  
+  return await databases.updateDocument(
+    databaseId,
+    transactionsTableId,
+    transactionId,
     data
   );
 }
@@ -554,6 +616,9 @@ export async function createBulkTransactions(
     excludeFromAnalytics?: boolean;
     isAnalyticsProtected?: boolean;
     source?: "revolut_import" | "manual" | "other_import";
+    displayName?: string;
+    account?: string;
+    matchedTransferId?: string;
   }>,
   onProgress?: (current: number, total: number) => void,
   shouldCancel?: () => boolean,
@@ -590,7 +655,10 @@ export async function createBulkTransactions(
             tx.id, // Pass the queue transaction ID to prevent duplicates
             tx.excludeFromAnalytics,
             tx.isAnalyticsProtected,
-            tx.source
+            tx.source,
+            tx.displayName,
+            tx.account,
+            tx.matchedTransferId
           );
           return { success: true, index: i + batchIndex };
         } catch (err: any) {
@@ -655,4 +723,5 @@ export async function createBulkTransactions(
   
   return { created, failed: errors.length, errors, successfulIndices };
 }
+
 

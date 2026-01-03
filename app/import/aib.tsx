@@ -13,13 +13,13 @@ const TUTORIAL_STEPS = [
   },
   {
     step: 2,
-    title: "Download statement",
-    description: "Choose your account, select 'Historical' if there is a button for it (only on current accounts), and export as CSV.",
+    title: "Set Parameters",
+    description: "Choose your account, select Historical, click Search and set your desired date range.",
   },
   {
     step: 3,
-    title: "Share or copy the CSV",
-    description: "Save the CSV to Files.",
+    title: "Export then Save, Share or copy the CSV",
+    description: "Then export as CSV and save the CSV to Files.",
   },
   {
     step: 4,
@@ -75,6 +75,33 @@ export default function AibImportScreen() {
           </View>
         </View>
 
+        {/* Important Warning */}
+        <View className="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-8">
+          <Text className="text-xs font-semibold text-amber-900 mb-3">⚠️ Important: After Signing In</Text>
+          <View className="gap-2">
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">1.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Go to your account transactions</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">2.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Set your date range</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">3.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Click Export → CSV</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">4.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Download the file</Text>
+            </View>
+            <View className="flex-row gap-2">
+              <Text className="text-amber-900">5.</Text>
+              <Text className="text-sm text-amber-800 flex-1 font-semibold">Return to this app to import</Text>
+            </View>
+          </View>
+        </View>
+
         {/* Tutorial Steps */}
         <View className="gap-4 mb-8">
           {TUTORIAL_STEPS.map((item) => (
@@ -104,25 +131,6 @@ export default function AibImportScreen() {
               </View>
             </Pressable>
           ))}
-        </View>
-
-        {/* What You'll Need */}
-        <View className="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-8">
-          <Text className="text-xs font-semibold text-amber-900 mb-3">📋 What You'll Need</Text>
-          <View className="gap-2">
-            <View className="flex-row gap-2">
-              <Text className="text-amber-900">•</Text>
-              <Text className="text-sm text-amber-800 flex-1">Access to your AIB online banking</Text>
-            </View>
-            <View className="flex-row gap-2">
-              <Text className="text-amber-900">•</Text>
-              <Text className="text-sm text-amber-800 flex-1">CSV export of your chosen account</Text>
-            </View>
-            <View className="flex-row gap-2">
-              <Text className="text-amber-900">•</Text>
-              <Text className="text-sm text-amber-800 flex-1">A few minutes to paste and review</Text>
-            </View>
-          </View>
         </View>
 
         {/* Info Box */}

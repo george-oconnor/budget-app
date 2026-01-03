@@ -80,9 +80,50 @@ export default function RevolutImportPasteScreen() {
         return;
       }
 
+      // Build hints for account resolution (used for both balance parsing and transaction conversion)
+      const lastVaultNameByCurrency = new Map<string, string>();
+      const lastPocketNameByCurrency = new Map<string, string>();
+      
+      for (const transaction of parseResult.transactions) {
+        if (!transaction.state || transaction.state.toUpperCase() !== 'COMPLETED') continue;
+        const productLower = transaction.product?.toLowerCase();
+        const currency = transaction.currency || 'EUR';
+        
+        if (productLower === 'savings') {
+          const vaultMatch = transaction.description.match(/To pocket (?:EUR|GBP|USD)\s+(.+?)\s+from (?:EUR|GBP|USD)/i);
+          if (vaultMatch && vaultMatch[1]) {
+            lastVaultNameByCurrency.set(currency, vaultMatch[1].trim());
+          }
+        } else if (productLower === 'pocket') {
+          const pocketMatch = transaction.description.match(/To pocket (?:EUR|GBP|USD)\s+(.+?)\s+from (?:EUR|GBP|USD)/i);
+          if (pocketMatch && pocketMatch[1]) {
+            lastPocketNameByCurrency.set(currency, pocketMatch[1].trim());
+          }
+        }
+      }
+
       // Convert to app format (async for categorization)
       const convertedTransactions = await Promise.all(
-        parseResult.transactions.map(convertRevolutToAppTransaction)
+        parseResult.transactions.map(async (tx) => {
+          const converted = await convertRevolutToAppTransaction(tx);
+          // Resolve account name using the same logic as balance parsing
+
+          const currency = tx.currency || 'EUR';
+          const pocketNameHint = lastPocketNameByCurrency.get(currency);
+          const vaultNameHint = lastVaultNameByCurrency.get(currency);
+          const accountInfo = resolveAccountInfo({
+            description: tx.description,
+            product: tx.product,
+            currency,
+            provider: 'revolut',
+            pocketNameHint,
+            vaultNameHint,
+          });
+          return {
+            ...converted,
+            account: accountInfo.accountName,
+          };
+        })
       );
 
       // Detect and mark transfer pairs (account transfers with matching debit/credit)
@@ -101,11 +142,6 @@ export default function RevolutImportPasteScreen() {
           lastDateISO: string;
         }
       >();
-
-      // Track the last seen vault name per currency so generic "Pocket Withdrawal" rows can still map correctly
-      const lastVaultNameByCurrency = new Map<string, string>();
-      // Track the last seen pocket name per currency so pocket spend rows without the pattern can still map correctly
-      const lastPocketNameByCurrency = new Map<string, string>();
 
       if (parseResult.transactions.length > 0) {
         // FIRST PASS: Process completed transactions to establish final balances

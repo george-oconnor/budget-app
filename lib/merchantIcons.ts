@@ -30,8 +30,12 @@ const merchantDomains: Record<string, string> = {
   'pizza hut': 'pizzahut.com',
   'domino': 'dominos.com',
   'mister magpie coffee': 'https://images.squarespace-cdn.com/content/v1/68ecd9f7270976356ad1b0d6/7733332e-7601-4e11-a84e-6a8f48ad90e2/Mister+Magpie+Logo.png?format=1500w',
+  'mister mag': 'https://images.squarespace-cdn.com/content/v1/68ecd9f7270976356ad1b0d6/7733332e-7601-4e11-a84e-6a8f48ad90e2/Mister+Magpie+Logo.png?format=1500w',
   'spar food & fuel': 'spar.co.uk',
   'qskitchen. qs kitchen': 'qskitchen.ie',
+  'qskitchen.* qs': 'qskitchen.ie',
+  'boeuf restaura': 'boeuf.ie',
+  'butlers chocol': 'butlerschocolate.com',
   
   // Transport
   'uber': 'uber.com',
@@ -75,6 +79,10 @@ const merchantDomains: Record<string, string> = {
   'bt': 'bt.com',
   'sky': 'sky.com',
   'virgin media': 'virginmedia.com',
+  'bord gais eire': 'bordgais.ie',
+  'electric ireland': 'electricireland.ie',
+  'prepay power': 'prepaypower.ie',
+  'eir': 'eir.ie',
   
   // Gyms & Health
   'puregym': 'puregym.com',

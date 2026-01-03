@@ -1,19 +1,20 @@
-import { getAccountBalances, updateAccountBalance } from "@/lib/accountBalances";
-import { getAllTransactionsForUser } from "@/lib/appwrite";
-import { detectTransferPairs, markTransfers } from "@/lib/csvParser";
-import { queueTransactionsForSync } from "@/lib/syncQueue";
+import { updateAccountBalance } from "@/lib/accountBalances";
+import { getAllTransactionsForUser, updateTransaction } from "@/lib/appwrite";
+import { getTransferCategoryId } from "@/lib/categorization";
+import { detectAibTransfers, detectCrossBankTransfers } from "@/lib/csvParser";
+import { getQueuedTransactions, queueTransactionsForSync, updateQueuedTransactions } from "@/lib/syncQueue";
 import { useHomeStore } from "@/store/useHomeStore";
 import { useSessionStore } from "@/store/useSessionStore";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
     FlatList,
     Pressable,
+    ScrollView,
     Text,
-    TextInput,
-    View,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { clearParsedTransactions, getParsedTransactions } from "./paste";
@@ -28,6 +29,7 @@ interface Transaction {
   currency: string;
   excludeFromAnalytics?: boolean;
   isAnalyticsProtected?: boolean;
+  displayName?: string;
 }
 
 // Helpers for robust deduping: normalize text and use date-only key to avoid timezone string mismatches
@@ -46,6 +48,13 @@ const makeKeyFromDoc = (doc: any) =>
 export default function ImportPreviewScreen() {
   const { user } = useSessionStore();
   const { fetchHome } = useHomeStore();
+  const params = useLocalSearchParams();
+  const selectedAccountKey = params.selectedAccountKey as string;
+  const selectedAccountName = params.selectedAccountName as string;
+  const selectedAccountType = params.selectedAccountType as string;
+  const newAccountName = params.newAccountName as string;
+  const newAccountType = params.newAccountType as string;
+  
   const [loading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
@@ -62,13 +71,6 @@ export default function ImportPreviewScreen() {
     skippedDetails: { line: number; reason: string }[];
   } | null>(null);
   const cancelRef = useRef(false);
-  
-  // Account selection state
-  const [existingAibAccounts, setExistingAibAccounts] = useState<Array<{key: string, name: string, type: string}>>([]);
-  const [selectedAccountKey, setSelectedAccountKey] = useState<string | null>(null);
-  const [isCreatingNewAccount, setIsCreatingNewAccount] = useState(false);
-  const [newAccountName, setNewAccountName] = useState("");
-  const [newAccountType, setNewAccountType] = useState("Current");
   const [finalBalance, setFinalBalance] = useState<number | undefined>();
   const [currency, setCurrency] = useState<string>("EUR");
   const [zeroAmountIndices, setZeroAmountIndices] = useState<Set<number>>(new Set());
@@ -100,50 +102,15 @@ export default function ImportPreviewScreen() {
     }
   }, []);
 
-  // Load existing AIB accounts
-  useEffect(() => {
-    const loadAccounts = async () => {
-      if (!user?.id) return;
-      try {
-        const balances = await getAccountBalances();
-        console.log('All balances:', balances.map(b => ({ name: b.accountName, provider: b.provider, key: b.accountKey })));
-        const aibAccounts = balances
-          .filter(b => {
-            const isAib = b.provider === 'aib' && b.accountKey;
-            if (b.accountKey) {
-              console.log(`Account ${b.accountName}: provider=${b.provider}, isAib=${isAib}`);
-            }
-            return isAib;
-          })
-          .map(b => ({
-            key: b.accountKey!,
-            name: b.accountName,
-            type: b.accountType || 'Current',
-          }));
-        console.log('Filtered AIB accounts:', aibAccounts);
-        setExistingAibAccounts(aibAccounts);
-        if (aibAccounts.length === 1) {
-          // Auto-select if only one AIB account exists
-          setSelectedAccountKey(aibAccounts[0].key);
-        } else if (aibAccounts.length === 0) {
-          // No existing accounts, default to creating new
-          setIsCreatingNewAccount(true);
-        }
-      } catch (err) {
-        console.error('Failed to load AIB accounts:', err);
-      }
-    };
-    loadAccounts();
-  }, [user?.id]);
-
   useEffect(() => {
     const runPrecheck = async () => {
       if (!user?.id || transactions.length === 0) return;
       try {
-        const times = transactions.map((t) => new Date(t.date).getTime());
-        const startISO = new Date(Math.min(...times)).toISOString();
-        const endISO = new Date(Math.max(...times)).toISOString();
+        console.log('Starting precheck - fetching all transactions...');
+        const startTime = Date.now();
         const existing = await getAllTransactionsForUser(user.id);
+        console.log(`Fetched ${existing.length} existing transactions in ${Date.now() - startTime}ms`);
+        
         const existingKeys = new Set(existing.map(makeKeyFromDoc));
         const dupKeys = new Set<string>();
         let unique = 0;
@@ -162,6 +129,7 @@ export default function ImportPreviewScreen() {
         setPreUniqueCount(unique);
         setDuplicateKeys(dupKeys);
         setPrecheckDone(true);
+        console.log(`Precheck complete: ${unique} unique, ${skipped} duplicates`);
       } catch (e) {
         console.warn("Precheck dedupe failed:", e);
       }
@@ -180,14 +148,9 @@ export default function ImportPreviewScreen() {
       return;
     }
 
-    // Validate account selection
-    if (!isCreatingNewAccount && !selectedAccountKey) {
-      Alert.alert("Error", "Please select an account or create a new one");
-      return;
-    }
-
-    if (isCreatingNewAccount && !newAccountName.trim()) {
-      Alert.alert("Error", "Please enter an account name");
+    // Validate account selection from params
+    if (!selectedAccountKey && !newAccountName) {
+      Alert.alert("Error", "No account selected. Please go back and select an account.");
       return;
     }
 
@@ -195,8 +158,35 @@ export default function ImportPreviewScreen() {
     setLoading(true);
 
     try {
-      const existing = await getAllTransactionsForUser(user.id);
-      const existingKeys = new Set(existing.map(makeKeyFromDoc));
+      console.log('=== AIB Import Started ===');
+      const startTotal = Date.now();
+
+      console.log('Step 1: Fetching existing transactions from DB and queue...');
+      const step1Start = Date.now();
+      const [existingDb, queuedTransactions] = await Promise.all([
+        getAllTransactionsForUser(user.id),
+        getQueuedTransactions()
+      ]);
+      // Combine database and queued transactions for transfer detection
+      const existing = [...existingDb];
+      console.log(`Step 1 complete: Fetched ${existingDb.length} from DB + ${queuedTransactions.length} from queue in ${Date.now() - step1Start}ms`);
+
+      console.log('Step 2: Deduplication...');
+      const step2Start = Date.now();
+      // Create deduplication keys from both DB and queue
+      const existingKeys = new Set([
+        ...existing.map(makeKeyFromDoc),
+        ...queuedTransactions.map((q: any) => makeKeyFromTransaction({
+          title: q.title,
+          subtitle: q.subtitle,
+          amount: Math.abs(q.amount),
+          kind: q.kind,
+          date: q.date,
+          categoryId: q.categoryId,
+          currency: q.currency,
+          displayName: q.displayName,
+        }))
+      ]);
 
       // Filter out transactions with zero amount and existing transactions
       const deduped: Transaction[] = [];
@@ -208,53 +198,231 @@ export default function ImportPreviewScreen() {
         if (existingKeys.has(key)) continue;
         deduped.push(t);
       }
+      console.log(`Step 2 complete: Deduplicated to ${deduped.length} transactions in ${Date.now() - step2Start}ms`);
 
-      const existingAsTransactions: Transaction[] = existing.map((doc: any) => ({
-        title: doc.title || '',
-        subtitle: doc.subtitle || '',
-        amount: Math.abs(Number(doc.amount)),
-        kind: doc.kind,
-        date: doc.date || '',
-        categoryId: doc.categoryId || '',
-        currency: doc.currency || 'EUR',
-        excludeFromAnalytics: doc.excludeFromAnalytics,
-        isAnalyticsProtected: doc.isAnalyticsProtected,
-      }));
+      console.log('Step 3: Converting existing transactions...');
+      const step3Start = Date.now();
+      // Convert both DB and queued transactions for transfer detection
+      const existingAsTransactions: Transaction[] = [
+        ...existing.map((doc: any) => ({
+          title: doc.title || '',
+          subtitle: doc.subtitle || '',
+          amount: Math.abs(Number(doc.amount)),
+          kind: doc.kind,
+          date: doc.date || '',
+          categoryId: doc.categoryId || '',
+          currency: doc.currency || 'EUR',
+          excludeFromAnalytics: doc.excludeFromAnalytics,
+          isAnalyticsProtected: doc.isAnalyticsProtected,
+          displayName: doc.displayName,
+        })),
+        ...queuedTransactions.map((q: any) => ({
+          title: q.title || '',
+          subtitle: q.subtitle || '',
+          amount: Math.abs(Number(q.amount)),
+          kind: q.kind,
+          date: q.date || '',
+          categoryId: q.categoryId || '',
+          currency: q.currency || 'EUR',
+          excludeFromAnalytics: q.excludeFromAnalytics,
+          isAnalyticsProtected: q.isAnalyticsProtected,
+          displayName: q.displayName,
+        }))
+      ];
+      console.log(`Step 3 complete: Converted in ${Date.now() - step3Start}ms`);
       
-      const combinedForDetection = [...existingAsTransactions, ...deduped];
-      const transferIndicesInCombined = detectTransferPairs(combinedForDetection);
+      console.log('Step 4: Detecting AIB transfers...');
+      const step4Start = Date.now();
+      // For AIB imports, detect internal transfers using AIB-specific logic:
+      // - Same date, *MOBI in title, same amount, opposite kind
+      const aibTransfersResult = detectAibTransfers(deduped, existingAsTransactions);
+      const aibTransferIndicesInNew = aibTransfersResult.newIndices;
+      const aibTransferIndicesInExisting = aibTransfersResult.existingIndices;
+      const aibPairs = aibTransfersResult.pairs;
+      console.log(`Step 4 complete: Found ${aibTransferIndicesInNew.size} AIB transfers in ${Date.now() - step4Start}ms`);
       
-      const existingCount = existingAsTransactions.length;
-      const transferIndicesInNew = new Set<number>();
-      transferIndicesInCombined.forEach(idx => {
-        if (idx >= existingCount) {
-          transferIndicesInNew.add(idx - existingCount);
+      console.log('Step 5: Detecting cross-bank transfers...');
+      const step5Start = Date.now();
+      // Detect cross-bank transfers (AIB ↔ Revolut)
+      const dbCount = existing.length;
+      const existingRevolutTransactions = existingAsTransactions.filter((_, idx) => {
+        if (idx < dbCount) {
+          return existing[idx].source === 'revolut_import';
+        } else {
+          return queuedTransactions[idx - dbCount].source === 'revolut_import';
+        }
+      });
+      const revolutIndicesMap = new Map<number, number>();
+      let revolutMappedIndex = 0;
+      existingAsTransactions.forEach((tx, idx) => {
+        const isRevolut = idx < dbCount 
+          ? existing[idx].source === 'revolut_import'
+          : queuedTransactions[idx - dbCount].source === 'revolut_import';
+        if (isRevolut) {
+          revolutIndicesMap.set(revolutMappedIndex++, idx);
         }
       });
       
-      const dedupedWithTransfers = await markTransfers(deduped);
+      const crossBankResult = detectCrossBankTransfers(
+        deduped,
+        existingRevolutTransactions,
+        'aib_import',
+        'revolut_import'
+      );
+      const mappedCrossBankPairs: Array<{ newIndex: number; existingIndex: number }> = [];
+      crossBankResult.pairs.forEach(pair => {
+        const originalIdx = revolutIndicesMap.get(pair.existingIndex);
+        if (originalIdx !== undefined) {
+          mappedCrossBankPairs.push({ newIndex: pair.newIndex, existingIndex: originalIdx });
+        }
+      });
+      console.log(`Step 5 complete: Found ${crossBankResult.newIndices.size} cross-bank transfers in ${Date.now() - step5Start}ms`);
       
-      const finalTransactions = dedupedWithTransfers.map((tx, idx) => {
-        if (transferIndicesInNew.has(idx) && !tx.isAnalyticsProtected) {
+      console.log('Step 6: Combining transfer indices...');
+      const step6Start = Date.now();
+      // Combine AIB-specific and cross-bank transfer indices
+      const allTransferIndicesInNew = new Set([...aibTransferIndicesInNew, ...crossBankResult.newIndices]);
+      const crossBankExistingIndices = new Set<number>();
+      crossBankResult.existingIndices.forEach(idx => {
+        const originalIdx = revolutIndicesMap.get(idx);
+        if (originalIdx !== undefined) {
+          crossBankExistingIndices.add(originalIdx);
+        }
+      });
+      const allTransferIndicesInExisting = new Set([...aibTransferIndicesInExisting, ...crossBankExistingIndices]);
+
+      // Separate existing transactions from DB vs queue for proper updating
+      const dbTransactionCount = existing.length;
+      const dbTransferIndices = new Set<number>();
+      const queuedTransferIndices = new Set<number>();
+      allTransferIndicesInExisting.forEach(idx => {
+        if (idx < dbTransactionCount) {
+          dbTransferIndices.add(idx);
+        } else {
+          queuedTransferIndices.add(idx - dbTransactionCount);
+        }
+      });
+
+      // Map of new transaction index -> matched existing transaction ID
+      const newToExistingId = new Map<number, string>();
+      const allPairs: Array<{ newIndex: number; existingIndex: number }> = [...aibPairs, ...mappedCrossBankPairs];
+      allPairs.forEach(({ newIndex, existingIndex }) => {
+        if (existingIndex < dbTransactionCount) {
+          // Match is with a DB transaction
+          const existingTx = existing[existingIndex];
+          if (existingTx?.$id) {
+            newToExistingId.set(newIndex, existingTx.$id);
+          }
+        } else {
+          // Match is with a queued transaction
+          const queuedTx = queuedTransactions[existingIndex - dbTransactionCount];
+          if (queuedTx?.id) {
+            newToExistingId.set(newIndex, queuedTx.id);
+          }
+        }
+      });
+      console.log(`Step 6 complete: Combined indices (${dbTransferIndices.size} in DB, ${queuedTransferIndices.size} in queue) in ${Date.now() - step6Start}ms`);
+      
+      console.log('Step 7: Getting transfer category ID...');
+      const step7Start = Date.now();
+      // Get the transfer category ID
+      const transferCategoryId = await getTransferCategoryId();
+      console.log(`Step 7 complete: Got transfer category in ${Date.now() - step7Start}ms`);
+      
+      console.log(`Step 8: Updating ${dbTransferIndices.size} existing DB transactions...`);
+      const step8Start = Date.now();
+      // Update only existing DB transactions that were identified as transfers
+      // (Queued transactions will be updated when they sync)
+      for (const existingIdx of dbTransferIndices) {
+        const existingTx = existing[existingIdx];
+        await updateTransaction(existingTx.$id, {
+          categoryId: transferCategoryId,
+          excludeFromAnalytics: true,
+          isAnalyticsProtected: true,
+        });
+      }
+      console.log(`Step 8 complete: Updated ${dbTransferIndices.size} DB transactions in ${Date.now() - step8Start}ms`);
+      
+      console.log('Step 9: Marking new transfers...');
+      const step9Start = Date.now();
+      // Mark new AIB internal transfers and cross-bank transfers with Transfer category and analytics protection
+      const finalTransactions = deduped.map((tx, idx) => {
+        const matchedExistingId = newToExistingId.get(idx);
+        if (allTransferIndicesInNew.has(idx)) {
           return {
             ...tx,
+            categoryId: transferCategoryId,
             excludeFromAnalytics: true,
             isAnalyticsProtected: true,
+            matchedTransferId: matchedExistingId,
           };
         }
-        return tx;
+        return {
+          ...tx,
+          matchedTransferId: matchedExistingId,
+        };
       });
+      console.log(`Step 9 complete: Marked transfers in ${Date.now() - step9Start}ms`);
 
+      console.log('Step 10: Queueing transactions for sync...');
+      const step10Start = Date.now();
       const skipped = transactions.length - finalTransactions.length;
       setSkippedCount(skipped);
       setUniqueCount(finalTransactions.length);
       setImportProgress({ current: 0, total: finalTransactions.length });
 
-      await queueTransactionsForSync(
+      const accountName = selectedAccountName || newAccountName;
+      const queuedTxs = await queueTransactionsForSync(
         user.id, 
-        finalTransactions.map(tx => ({ ...tx, source: "aib_import" as const }))
+        finalTransactions.map(tx => ({ 
+          ...tx, 
+          source: "aib_import" as const,
+          displayName: tx.displayName || tx.title, // Explicitly ensure displayName is set
+          account: accountName,
+        }))
       );
+      
+      // Update existing transactions with matched transfer IDs
+      const dbUpdates: Array<Promise<any>> = [];
+      const queueUpdates: Array<{ id: string; updates: Partial<any> }> = [];
+      
+      if (queuedTxs?.length) {
+        for (const { newIndex, existingIndex } of allPairs) {
+          const queuedTx = queuedTxs[newIndex];
+          if (!queuedTx) continue;
+          
+          if (existingIndex < dbTransactionCount) {
+            // Update DB transaction with matched ID pointing to newly queued item
+            const existingTx = existing[existingIndex];
+            if (existingTx?.$id) {
+              dbUpdates.push(
+                updateTransaction(existingTx.$id, {
+                  matchedTransferId: queuedTx.id,
+                })
+              );
+            }
+          } else {
+            // Update queued transaction with matched ID pointing to newly queued item
+            const queuedExistingTx = queuedTransactions[existingIndex - dbTransactionCount];
+            if (queuedExistingTx?.id) {
+              queueUpdates.push({
+                id: queuedExistingTx.id,
+                updates: { matchedTransferId: queuedTx.id }
+              });
+            }
+          }
+        }
+        
+        // Execute all updates
+        await Promise.all(dbUpdates);
+        if (queueUpdates.length > 0) {
+          await updateQueuedTransactions(queueUpdates);
+        }
+      }
+      console.log(`Step 10 complete: Queued ${finalTransactions.length} transactions, updated ${dbUpdates.length} DB + ${queueUpdates.length} queued matches in ${Date.now() - step10Start}ms`);
 
+      console.log('Step 11: Progress animation...');
+      const step11Start = Date.now();
       let current = 0;
       for (const _ of finalTransactions) {
         if (cancelRef.current) break;
@@ -262,15 +430,15 @@ export default function ImportPreviewScreen() {
         setImportProgress({ current, total: finalTransactions.length });
         await new Promise(res => setTimeout(res, 50));
       }
+      console.log(`Step 11 complete: Animation done in ${Date.now() - step11Start}ms`);
 
-      // Update account balance if we have a final balance and account selection
-      if (finalBalance !== undefined) {
-        const selectedAcc = !isCreatingNewAccount
-          ? existingAibAccounts.find(a => a.key === selectedAccountKey)
-          : null;
-        const accountName = isCreatingNewAccount ? newAccountName : (selectedAcc?.name || "");
-        const accountKey = !isCreatingNewAccount ? selectedAccountKey || undefined : undefined;
-        const accountType = isCreatingNewAccount ? newAccountType : (selectedAcc?.type || undefined);
+      console.log('Step 12: Updating account balance...');
+      const step12Start = Date.now();
+      // Update account balance if we have a final balance and account info
+      if (finalBalance !== undefined && (selectedAccountName || newAccountName)) {
+        const accountName = selectedAccountName || newAccountName;
+        const accountKey = selectedAccountKey || undefined;
+        const accountType = selectedAccountType || newAccountType;
 
         if (accountName) {
           await updateAccountBalance(accountName, finalBalance, currency, {
@@ -281,8 +449,14 @@ export default function ImportPreviewScreen() {
           console.log(`Updated balance for ${accountName}: ${(finalBalance / 100).toFixed(2)} ${currency}`);
         }
       }
+      console.log(`Step 12 complete: Balance updated in ${Date.now() - step12Start}ms`);
 
+      console.log('Step 13: Fetching home data...');
+      const step13Start = Date.now();
       await fetchHome();
+      console.log(`Step 13 complete: Fetched home in ${Date.now() - step13Start}ms`);
+      
+      console.log(`=== Total import time: ${Date.now() - startTotal}ms ===`);
       clearParsedTransactions();
       Alert.alert("Success", `Imported ${finalTransactions.length} transactions`, [
         { text: "OK", onPress: () => router.replace("/") },
@@ -342,7 +516,18 @@ export default function ImportPreviewScreen() {
           )}
         </View>
 
-        {/* Progress */}
+        <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
+          {/* Precheck info */}
+          {precheckDone && (
+            <View className="px-5 py-3 bg-gray-50 border-b border-gray-100">
+              <Text className="text-xs text-gray-600">
+                {preUniqueCount} new, {preSkippedCount} already in your account.
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+
+        {/* Progress Bar */}
         {loading && (
           <View className="px-5 py-3 bg-yellow-50 border-b border-yellow-100 flex-row items-center gap-2">
             <ActivityIndicator size="small" color="#ca8a04" />
@@ -352,92 +537,13 @@ export default function ImportPreviewScreen() {
           </View>
         )}
 
-        {/* Precheck info */}
-        {precheckDone && (
-          <View className="px-5 py-3 bg-gray-50 border-b border-gray-100">
-            <Text className="text-xs text-gray-600">
-              {preUniqueCount} new, {preSkippedCount} already in your account.
-            </Text>
+        {/* Fixed Account Selection */}
+        <View className="px-5 py-4 bg-blue-50 border-b border-gray-100">
+          <Text className="text-sm font-semibold text-gray-700 mb-3">Importing to:</Text>
+          <View className="p-3 rounded-xl bg-white border-2 border-sky-500">
+            <Text className="text-sm font-semibold text-gray-800">{selectedAccountName || newAccountName}</Text>
+            <Text className="text-xs text-gray-500 mt-1">{selectedAccountType || newAccountType}</Text>
           </View>
-        )}
-
-        {/* Account Selection */}
-        <View className="px-5 py-4 bg-blue-50 border-b border-blue-100">
-          <Text className="text-sm font-semibold text-gray-700 mb-3">Select AIB Account</Text>
-          
-          {existingAibAccounts.length > 0 && (
-            <View className="mb-3">
-              {existingAibAccounts.map((acc) => (
-                <Pressable
-                  key={acc.key}
-                  onPress={() => {
-                    setSelectedAccountKey(acc.key);
-                    setIsCreatingNewAccount(false);
-                  }}
-                  className={`p-3 rounded-xl mb-2 border-2 ${
-                    selectedAccountKey === acc.key && !isCreatingNewAccount
-                      ? "bg-sky-50 border-sky-500"
-                      : "bg-white border-gray-200"
-                  }`}
-                >
-                  <Text className="text-sm font-semibold text-gray-800">{acc.name}</Text>
-                  <Text className="text-xs text-gray-500">{acc.type}</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-
-          <Pressable
-            onPress={() => {
-              setIsCreatingNewAccount(true);
-              setSelectedAccountKey(null);
-            }}
-            className={`p-3 rounded-xl border-2 ${
-              isCreatingNewAccount
-                ? "bg-sky-50 border-sky-500"
-                : "bg-white border-gray-200"
-            }`}
-          >
-            <Text className="text-sm font-semibold text-gray-800">+ Create New Account</Text>
-          </Pressable>
-
-          {isCreatingNewAccount && (
-            <View className="mt-3 gap-3">
-              <View>
-                <Text className="text-xs text-gray-600 mb-1">Account Name</Text>
-                <TextInput
-                  value={newAccountName}
-                  onChangeText={setNewAccountName}
-                  placeholder="e.g., AIB Current Account"
-                  className="bg-white border border-gray-300 rounded-xl px-4 py-3 text-sm"
-                />
-              </View>
-              <View>
-                <Text className="text-xs text-gray-600 mb-1">Account Type</Text>
-                <View className="flex-row gap-2">
-                  {["Current", "Savings", "Credit Card"].map((type) => (
-                    <Pressable
-                      key={type}
-                      onPress={() => setNewAccountType(type)}
-                      className={`px-4 py-2 rounded-xl border ${
-                        newAccountType === type
-                          ? "bg-sky-500 border-sky-500"
-                          : "bg-white border-gray-300"
-                      }`}
-                    >
-                      <Text
-                        className={`text-xs font-medium ${
-                          newAccountType === type ? "text-white" : "text-gray-700"
-                        }`}
-                      >
-                        {type}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            </View>
-          )}
         </View>
 
         <FlatList
@@ -445,6 +551,7 @@ export default function ImportPreviewScreen() {
           keyExtractor={(_, idx) => `tx-${idx}`}
           renderItem={renderItem}
           contentContainerStyle={{ padding: 20, paddingBottom: 140 }}
+          keyboardShouldPersistTaps="handled"
           ListEmptyComponent={() => (
             <View className="items-center justify-center py-20">
               <Text className="text-gray-400">No transactions to preview</Text>

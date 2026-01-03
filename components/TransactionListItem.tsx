@@ -19,7 +19,7 @@ export default function TransactionListItem({
   const isIncome = transaction.kind === "income";
   const [tldIndex, setTldIndex] = useState(0);
   const [iconFailed, setIconFailed] = useState(false);
-  const rawMerchantIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.title, 64, tldIndex);
+  const rawMerchantIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.displayName || transaction.title, 64, tldIndex);
   // Revolut-specific fallback: for transfers "To pocket" or "Transfer to" from Revolut imports
   const titleKey = (transaction.title || "").toLowerCase();
   const isRevolutTransfer =
@@ -139,13 +139,14 @@ export default function TransactionListItem({
           </View>
           <View className="flex-1">
             <Text className="font-semibold text-dark-100 text-base">
-              {transaction.title}
+              {transaction.displayName || transaction.title}
             </Text>
             <Text className="text-xs text-gray-500 mt-1">
               {categoryName || "Uncategorized"}
             </Text>
             <Text className="text-xs text-gray-400 mt-1">
-              {formatDateHeader(transaction.date)} • {formatTime(transaction.date)}
+              {formatDateHeader(transaction.date)}
+              {transaction.source !== "aib_import" && ` • ${formatTime(transaction.date)}`}
             </Text>
           </View>
         </View>

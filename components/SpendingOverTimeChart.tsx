@@ -2,8 +2,8 @@ import { getCycleStartDate } from "@/lib/budgetCycle";
 import type { Transaction } from "@/types/type";
 import * as Haptics from "expo-haptics";
 import { useMemo, useRef, useState } from "react";
-import { Dimensions, GestureResponderEvent, Pressable, Text, View } from "react-native";
-import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop, Text as SvgText } from "react-native-svg";
+import { Dimensions, GestureResponderEvent, Text, View } from "react-native";
+import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from "react-native-svg";
 
 interface SpendingOverTimeChartProps {
   transactions: Transaction[];
@@ -162,7 +162,7 @@ export default function SpendingOverTimeChart({
       currentDate.setDate(currentDate.getDate() + 1);
     }
 
-    const maxAmount = Math.max(...cumulativeAmounts, ...prevCumulativeAmounts, 0);
+    const maxAmount = Math.max(...cumulativeAmounts, ...prevCumulativeAmounts, monthlyBudget, 0);
 
     // Generate points for the line chart - only up to today
     const points = days.slice(0, axisEndIndex + 1).map((day, index) => {
@@ -350,124 +350,267 @@ export default function SpendingOverTimeChart({
 
           {/* Vertical line at selected point */}
           {selectedPoint && (
-            <Line
-              x1={padding.left + selectedPoint.x}
-              y1={padding.top}
-              x2={padding.left + selectedPoint.x}
-              y2={padding.top + chartInnerHeight}
-              stroke={lineColor}
-              strokeWidth="2"
-              strokeDasharray="4,4"
-              opacity={0.5}
-            />
+            <>
+              <Line
+                x1={padding.left + selectedPoint.x}
+                y1={padding.top}
+                x2={padding.left + selectedPoint.x}
+                y2={padding.top + chartInnerHeight}
+                stroke={lineColor}
+                strokeWidth="2"
+                strokeDasharray="4,4"
+                opacity={0.5}
+              />
+              
+              {/* Popover box using SVG elements */}
+              {(() => {
+                const popoverWidth = 130;
+                const popoverHeight = 80;
+                const popoverX = Math.min(
+                  padding.left + selectedPoint.x + 15,
+                  screenWidth - popoverWidth - 10
+                );
+                // Adjust popoverY to ensure it doesn't get cut off at the bottom
+                let popoverY = Math.max(10, padding.top + selectedPoint.y - 40);
+                if (popoverY + popoverHeight > chartHeight - 30) {
+                  popoverY = chartHeight - popoverHeight - 30;
+                }
+                const prevAmount = prevPoints.find((p) => p.date === selectedPoint.date)?.amount ?? 0;
+                const diff = selectedPoint.amount - prevAmount;
+                const isZeroDiff = diff === 0;
+                const isNegativeDiff = diff < 0;
+                const diffColor = isZeroDiff ? '#F59E0B' : isNegativeDiff ? '#10B981' : '#EF4444';
+                
+                // Calculate previous cycle equivalent date
+                const cycleStart = getCycleStartDate(cycleType, cycleDay);
+                const selectedDate = new Date(selectedPoint.date);
+                const dayOffset = Math.floor((selectedDate.getTime() - cycleStart.getTime()) / (1000 * 60 * 60 * 24));
+                const prevCycleStart = new Date(cycleStart);
+                prevCycleStart.setMonth(prevCycleStart.getMonth() - 1);
+                const prevEquivalentDate = new Date(prevCycleStart);
+                prevEquivalentDate.setDate(prevEquivalentDate.getDate() + dayOffset);
+                
+                return (
+                  <>
+                    {/* Shadow */}
+                    <Rect
+                      x={popoverX + 2}
+                      y={popoverY + 2}
+                      width={popoverWidth}
+                      height={popoverHeight}
+                      rx={8}
+                      fill="#000000"
+                      opacity={0.1}
+                    />
+                    
+                    {/* Background */}
+                    <Rect
+                      x={popoverX}
+                      y={popoverY}
+                      width={popoverWidth}
+                      height={popoverHeight}
+                      rx={8}
+                      fill="#FFFFFF"
+                      opacity={1}
+                      stroke="#E5E7EB"
+                      strokeWidth={1}
+                    />
+                    
+                    {/* "spent:" label */}
+                    <SvgText
+                      x={popoverX + 8}
+                      y={popoverY + 16}
+                      fontSize="10"
+                      fill="#6B7280"
+                    >
+                      spent:
+                    </SvgText>
+                    
+                    {/* Difference amount (no sign) */}
+                    <SvgText
+                      x={popoverX + popoverWidth - 20}
+                      y={popoverY + 16}
+                      fontSize="14"
+                      fill={diffColor}
+                      fontWeight="bold"
+                      textAnchor="end"
+                    >
+                      {formatAmount(Math.abs(diff))}
+                    </SvgText>
+                    
+                    {/* Direction indicator next to value */}
+                    <Path
+                      d={(isNegativeDiff || isZeroDiff)
+                        ? `M ${popoverX + popoverWidth - 16} ${popoverY + 11} L ${popoverX + popoverWidth - 11} ${popoverY + 16} L ${popoverX + popoverWidth - 6} ${popoverY + 11} Z`
+                        : `M ${popoverX + popoverWidth - 16} ${popoverY + 16} L ${popoverX + popoverWidth - 11} ${popoverY + 11} L ${popoverX + popoverWidth - 6} ${popoverY + 16} Z`
+                      }
+                      fill={diffColor}
+                    />
+                    
+                    {/* Divider line */}
+                    <Line
+                      x1={popoverX + 8}
+                      y1={popoverY + 26}
+                      x2={popoverX + popoverWidth - 8}
+                      y2={popoverY + 26}
+                      stroke="#E5E7EB"
+                      strokeWidth={1}
+                    />
+                    
+                    {/* Current date (left) */}
+                    <SvgText
+                      x={popoverX + 8}
+                      y={popoverY + 42}
+                      fontSize="9"
+                      fill="#6B7280"
+                    >
+                      {new Date(selectedPoint.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </SvgText>
+                    
+                    {/* Current amount (right) */}
+                    <SvgText
+                      x={popoverX + popoverWidth - 8}
+                      y={popoverY + 42}
+                      fontSize="11"
+                      fill="#111827"
+                      fontWeight="600"
+                      textAnchor="end"
+                    >
+                      {formatAmount(selectedPoint.amount)}
+                    </SvgText>
+                    
+                    {/* Previous cycle date (left) */}
+                    <SvgText
+                      x={popoverX + 8}
+                      y={popoverY + 60}
+                      fontSize="9"
+                      fill="#9CA3AF"
+                    >
+                      {prevEquivalentDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </SvgText>
+                    
+                    {/* Previous cycle amount (right) */}
+                    <SvgText
+                      x={popoverX + popoverWidth - 8}
+                      y={popoverY + 60}
+                      fontSize="10"
+                      fill="#6B7280"
+                      textAnchor="end"
+                    >
+                      {formatAmount(prevAmount)}
+                    </SvgText>
+                  </>
+                );
+              })()}
+            </>
           )}
 
           {/* Y-axis labels */}
-          {yLabels.map((label, i) => (
-            <SvgText
-              key={`y-label-${i}`}
-              x={padding.left + chartWidth + 10}
-              y={label.y + 4}
-              fontSize="10"
-              fill="#9CA3AF"
-              textAnchor="start"
-            >
-              {label.label}
-            </SvgText>
-          ))}
-
-          {/* X-axis labels (start and end date) */}
-          {points.length > 0 && (
-            <>
+          {yLabels.map((label, i) => {
+            const isHiddenByPopover = selectedPoint && (() => {
+              const popoverWidth = 130;
+              const popoverHeight = 80;
+              const popoverX = Math.min(
+                padding.left + selectedPoint.x + 15,
+                screenWidth - popoverWidth - 10
+              );
+              const popoverY = Math.max(10, padding.top + selectedPoint.y - 40);
+              const labelX = padding.left + chartWidth + 10;
+              const labelY = label.y;
+              
+              return (
+                labelX >= popoverX - 20 &&
+                labelX <= popoverX + popoverWidth + 20 &&
+                labelY >= popoverY - 10 &&
+                labelY <= popoverY + popoverHeight + 10
+              );
+            })();
+            
+            if (isHiddenByPopover) return null;
+            
+            return (
               <SvgText
-                x={padding.left}
-                y={chartHeight - 10}
+                key={`y-label-${i}`}
+                x={padding.left + chartWidth + 10}
+                y={label.y + 4}
                 fontSize="10"
                 fill="#9CA3AF"
                 textAnchor="start"
               >
-                {new Date(points[0].date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                {label.label}
               </SvgText>
-              <SvgText
-                x={padding.left + chartWidth}
-                y={chartHeight - 10}
-                fontSize="10"
-                fill="#9CA3AF"
-                textAnchor="end"
-              >
-                {new Date(points[points.length - 1].date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-              </SvgText>
-            </>
-          )}
+            );
+          })}
+
+          {/* X-axis labels (start and end date) */}
+          {points.length > 0 && (() => {
+            const startLabelX = padding.left;
+            const endLabelX = padding.left + chartWidth;
+            const labelY = chartHeight - 10;
+            
+            const isStartHidden = selectedPoint && (() => {
+              const popoverWidth = 130;
+              const popoverHeight = 80;
+              const popoverX = Math.min(
+                padding.left + selectedPoint.x + 15,
+                screenWidth - popoverWidth - 10
+              );
+              const popoverY = Math.max(10, padding.top + selectedPoint.y - 40);
+              
+              return (
+                startLabelX >= popoverX - 50 &&
+                startLabelX <= popoverX + popoverWidth + 20 &&
+                labelY >= popoverY - 10 &&
+                labelY <= popoverY + popoverHeight + 10
+              );
+            })();
+            
+            const isEndHidden = selectedPoint && (() => {
+              const popoverWidth = 130;
+              const popoverHeight = 80;
+              const popoverX = Math.min(
+                padding.left + selectedPoint.x + 15,
+                screenWidth - popoverWidth - 10
+              );
+              const popoverY = Math.max(10, padding.top + selectedPoint.y - 40);
+              
+              return (
+                endLabelX >= popoverX - 50 &&
+                endLabelX <= popoverX + popoverWidth + 20 &&
+                labelY >= popoverY - 10 &&
+                labelY <= popoverY + popoverHeight + 10
+              );
+            })();
+            
+            return (
+              <>
+                {!isStartHidden && (
+                  <SvgText
+                    x={startLabelX}
+                    y={labelY}
+                    fontSize="10"
+                    fill="#9CA3AF"
+                    textAnchor="start"
+                  >
+                    {new Date(points[0].date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  </SvgText>
+                )}
+                {!isEndHidden && (
+                  <SvgText
+                    x={endLabelX}
+                    y={labelY}
+                    fontSize="10"
+                    fill="#9CA3AF"
+                    textAnchor="end"
+                  >
+                    {new Date(points[points.length - 1].date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  </SvgText>
+                )}
+              </>
+            );
+          })()}
         </Svg>
         </View>
-
-      {/* Detail card for selected point */}
-      {selectedPoint && (
-        <View className="mt-4 bg-gray-50 rounded-2xl p-4">
-          <View className="flex-row items-start justify-between mb-3">
-            <View className="flex-1">
-              <Text className="text-xs text-gray-500 mb-1">Current Cycle</Text>
-              <Text className="text-lg font-bold text-dark-100">
-                {formatAmount(selectedPoint.amount)}
-              </Text>
-              <Text className="text-xs text-gray-400 mt-0.5">
-                {new Date(selectedPoint.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-              </Text>
-            </View>
-            <Pressable 
-              onPress={() => {
-                setSelectedDate(null);
-                onDateSelected?.(null);
-              }}
-              className="h-8 w-8 items-center justify-center rounded-full bg-white border border-gray-200 active:bg-gray-100"
-            >
-              <Text className="text-sm text-gray-400">✕</Text>
-            </Pressable>
-          </View>
-
-          <View className="border-t border-gray-200 pt-3 flex-row justify-between">
-            <View className="flex-1">
-              <Text className="text-xs text-gray-500 mb-1">Previous Cycle</Text>
-              <Text className="text-sm font-semibold text-gray-700">
-                {formatAmount(prevPoints.find((p) => p.date === selectedPoint.date)?.amount ?? 0)}
-              </Text>
-              <Text className="text-xs text-gray-400 mt-0.5">
-                {(() => {
-                  const cycleStart = getCycleStartDate(cycleType, cycleDay);
-                  const selectedDate = new Date(selectedPoint.date);
-                  const dayOffset = Math.floor((selectedDate.getTime() - cycleStart.getTime()) / (1000 * 60 * 60 * 24));
-                  const prevCycleStart = new Date(cycleStart);
-                  prevCycleStart.setMonth(prevCycleStart.getMonth() - 1);
-                  const prevEquivalentDate = new Date(prevCycleStart);
-                  prevEquivalentDate.setDate(prevEquivalentDate.getDate() + dayOffset);
-                  return prevEquivalentDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-                })()}
-              </Text>
-            </View>
-
-            <View className="flex-1 items-end">
-              <Text className="text-xs text-gray-500 mb-1">Difference</Text>
-              <Text className={`text-sm font-bold ${
-                selectedPoint.amount <= (prevPoints.find((p) => p.date === selectedPoint.date)?.amount ?? 0) 
-                  ? "text-green-600" 
-                  : "text-red-600"
-              }`}>
-                {(() => {
-                  const diff = selectedPoint.amount - (prevPoints.find((p) => p.date === selectedPoint.date)?.amount ?? 0);
-                  const sign = diff > 0 ? "+" : "";
-                  return `${sign}${formatAmount(Math.abs(diff))}`;
-                })()}
-              </Text>
-              <Text className="text-xs text-gray-400 mt-0.5">
-                {selectedPoint.amount <= (prevPoints.find((p) => p.date === selectedPoint.date)?.amount ?? 0) 
-                  ? "Under last cycle" 
-                  : "Over last cycle"}
-              </Text>
-            </View>
-          </View>
-        </View>
-      )}
     </View>
   );
 }

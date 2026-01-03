@@ -1,4 +1,4 @@
-import { databases } from "@/lib/appwrite";
+import { databases, getAllTransactionsForUser } from "@/lib/appwrite";
 import { learnMerchantCategory } from "@/lib/categorization";
 import { formatCurrency } from "@/lib/currencyFunctions";
 import { getMerchantIconUrl } from "@/lib/merchantIcons";
@@ -34,6 +34,14 @@ function getDefaultIcon(categoryName: string): string {
   return iconMap[name] || 'shopping-bag';
 }
 
+// Normalize date to YYYY-MM-DD to avoid timezone shifts when comparing
+const dateOnlyKey = (value: string) => {
+  if (!value) return "";
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return (value || "").trim();
+  return new Date(time).toISOString().split("T")[0];
+};
+
 // Normalize potentially invalid icon names to valid Feather icons
 function normalizeFeatherIconName(icon: string | undefined, categoryName: string | undefined): string {
   const raw = (icon || '').toLowerCase().trim();
@@ -57,14 +65,16 @@ function normalizeFeatherIconName(icon: string | undefined, categoryName: string
   return validSet.has(normalized) ? normalized : getDefaultIcon(categoryName || '');
 }
 export default function TransactionDetailScreen() {
-  const { selectedTransactionId } = useTransactionDetailStore();
+  const { selectedTransactionId, setSelectedTransactionId } = useTransactionDetailStore();
   const id = selectedTransactionId?.trim();
   const { categories, summary } = useHomeStore();
   const { user } = useSessionStore();
+  const [derivedMatchId, setDerivedMatchId] = useState<string | undefined>(undefined);
   const [transaction, setTransaction] = useState<Transaction | null>(null);
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
+  const [editedDisplayName, setEditedDisplayName] = useState("");
   const [editedAmount, setEditedAmount] = useState("");
   const [editedExcludeFromAnalytics, setEditedExcludeFromAnalytics] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -90,6 +100,7 @@ export default function TransactionDetailScreen() {
 
     try {
       setLoading(true);
+      setDerivedMatchId(undefined);
       console.log("Loading transaction with ID:", id);
       
       let dbTx: Transaction | null = null;
@@ -117,6 +128,9 @@ export default function TransactionDetailScreen() {
           excludeFromAnalytics: response.excludeFromAnalytics ?? false,
           isAnalyticsProtected: response.isAnalyticsProtected ?? false,
           source: response.source,
+          displayName: response.displayName,
+          account: (response as any).account,
+          matchedTransferId: (response as any).matchedTransferId,
         };
         
         isQueued = false;
@@ -140,14 +154,63 @@ export default function TransactionDetailScreen() {
       if (dbTx) {
         setTransaction(dbTx);
         setEditedTitle(dbTx.title);
+        setEditedDisplayName(dbTx.displayName || dbTx.title);
         setEditedAmount((dbTx.amount / 100).toString());
         setEditedExcludeFromAnalytics(dbTx.excludeFromAnalytics ?? false);
         setIsQueuedTransaction(isQueued);
+        await resolveDerivedMatch(dbTx);
       }
     } catch (error) {
       console.error("Failed to load transaction:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const resolveDerivedMatch = async (current: Transaction) => {
+    if (!user?.id) return;
+    try {
+      const [dbTxs, queuedTxs] = await Promise.all([
+        getAllTransactionsForUser(user.id),
+        getQueuedTransactions(),
+      ]);
+
+      const mapDoc = (doc: any) => ({
+        id: doc.$id,
+        amount: Math.abs(Number(doc.amount)),
+        kind: doc.kind,
+        date: doc.date,
+        currency: doc.currency || "EUR",
+      });
+
+      const mappedDb = dbTxs.map(mapDoc);
+      const mappedQueue = queuedTxs.map(q => ({
+        id: q.id,
+        amount: Math.abs(Number(q.amount)),
+        kind: q.kind,
+        date: q.date,
+        currency: q.currency || "EUR",
+      }));
+
+      const combined = [...mappedDb, ...mappedQueue];
+      const targetDate = dateOnlyKey(current.date);
+      const targetAmount = Math.abs(Number(current.amount));
+      const targetKind = current.kind === "income" ? "expense" : "income";
+      const targetCurrency = current.currency || "EUR";
+
+      const candidate = combined.find(tx =>
+        tx.id !== current.id &&
+        dateOnlyKey(tx.date) === targetDate &&
+        Math.abs(Number(tx.amount)) === targetAmount &&
+        tx.kind === targetKind &&
+        (tx.currency || "EUR") === targetCurrency
+      );
+
+      if (candidate) {
+        setDerivedMatchId(candidate.id);
+      }
+    } catch (e) {
+      console.error("Failed to derive matched transfer:", e);
     }
   };
 
@@ -161,6 +224,14 @@ export default function TransactionDetailScreen() {
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const handleOpenMatchedTransfer = () => {
+    const targetId = transaction?.matchedTransferId || derivedMatchId;
+    if (!targetId) return;
+    if (targetId === id) return;
+    setSelectedTransactionId(targetId);
+    router.push("/transaction-detail");
   };
 
   // If the transaction title changes (different merchant), reset icon state
@@ -181,7 +252,7 @@ export default function TransactionDetailScreen() {
         const queuedTxs = await getQueuedTransactions();
         const updated = queuedTxs.map(t =>
           t.id === id
-            ? { ...t, title: editedTitle, amount, excludeFromAnalytics: editedExcludeFromAnalytics }
+            ? { ...t, title: editedTitle, amount, excludeFromAnalytics: editedExcludeFromAnalytics, displayName: editedDisplayName }
             : t
         );
         await AsyncStorage.setItem("budget_app_sync_queue", JSON.stringify(updated));
@@ -197,6 +268,7 @@ export default function TransactionDetailScreen() {
             title: editedTitle,
             amount,
             excludeFromAnalytics: editedExcludeFromAnalytics,
+            displayName: editedDisplayName,
           }
         );
       }
@@ -206,6 +278,7 @@ export default function TransactionDetailScreen() {
         title: editedTitle,
         amount,
         excludeFromAnalytics: editedExcludeFromAnalytics,
+        displayName: editedDisplayName,
       });
 
       // Refresh home store to reflect analytics changes
@@ -408,6 +481,7 @@ export default function TransactionDetailScreen() {
             tintColor="#7C3AED"
           />
         }
+        contentContainerStyle={isEditing ? { paddingBottom: 280 } : {}}
       >
         {/* Amount Display / Input with Icon */}
         <View className="mb-6">
@@ -431,7 +505,7 @@ export default function TransactionDetailScreen() {
             
             {/* Merchant Icon */}
             {transaction && (() => {
-              const baseIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.title, 128, tldIndex);
+              const baseIconUrl = iconFailed ? null : getMerchantIconUrl(transaction.displayName || transaction.title, 128, tldIndex);
               const titleKey = (transaction.title || "").toLowerCase();
               const isRevolutTransfer =
                 (transaction.source === "revolut_import") &&
@@ -511,16 +585,19 @@ export default function TransactionDetailScreen() {
 
         {/* Title */}
         <View className="mb-6">
-          <Text className="text-gray-500 text-sm mb-2">Title</Text>
+          <Text className="text-gray-500 text-sm mb-2">Original Name</Text>
+          <Text className="text-sm text-gray-600 mb-3">{transaction.title}</Text>
+          
+          <Text className="text-gray-500 text-sm mb-2">Display Name</Text>
           {isEditing ? (
             <TextInput
-              value={editedTitle}
-              onChangeText={setEditedTitle}
-              placeholder="Transaction title"
+              value={editedDisplayName}
+              onChangeText={setEditedDisplayName}
+              placeholder="How this transaction appears"
               className="text-base text-dark-100 border-b-2 border-primary pb-2 mb-2"
             />
           ) : (
-            <Text className="text-base font-semibold text-dark-100">{transaction.title}</Text>
+            <Text className="text-base font-semibold text-dark-100">{transaction.displayName || transaction.title}</Text>
           )}
         </View>
 
@@ -581,8 +658,32 @@ export default function TransactionDetailScreen() {
           </Text>
         </View>
 
+        {/* Account */}
+        <View className="mb-6 p-4 rounded-2xl bg-gray-50">
+          <Text className="text-gray-500 text-sm mb-2">Account</Text>
+          <Text className="text-base font-semibold text-dark-100">
+            {transaction.account || "Not specified"}
+          </Text>
+        </View>
+
+        {/* Matched Transfer */}
+        {(transaction.matchedTransferId || derivedMatchId) && (
+          <View className="mb-6 p-4 rounded-2xl bg-gray-50 gap-2">
+            <Text className="text-gray-500 text-sm">Matched Transfer</Text>
+            <Text className="text-xs text-gray-500">
+              Linked internal transfer detected during import{!transaction.matchedTransferId && derivedMatchId ? " (derived)" : ""}.
+            </Text>
+            <Pressable
+              onPress={handleOpenMatchedTransfer}
+              className="bg-primary rounded-xl py-3 px-4 items-center active:opacity-70"
+            >
+              <Text className="text-white font-semibold">Open matched transaction</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Exclude from Analytics Toggle */}
-        <View className="mb-6 p-4 rounded-2xl bg-gray-50 flex-row items-center justify-between">
+        <View className="mb-6 p-4 rounded-2xl bg-gray-50 flex-row items-center justify-between border border-gray-200">
           <View className="flex-1">
             <Text className="text-base font-semibold text-dark-100">
               Exclude from Analytics
@@ -598,8 +699,10 @@ export default function TransactionDetailScreen() {
             value={editedExcludeFromAnalytics}
             onValueChange={handleToggleExcludeFromAnalytics}
             disabled={transaction?.isAnalyticsProtected}
-            trackColor={{ false: "#E5E7EB", true: "#7C3AED" }}
-            thumbColor={editedExcludeFromAnalytics ? "#FFFFFF" : "#F3F4F6"}
+            trackColor={{ false: "#CBD5E1", true: "#7C3AED" }}
+            ios_backgroundColor="#CBD5E1"
+            thumbColor={"#FFFFFF"}
+            style={{ transform: [{ scale: 1.05 }] }}
           />
         </View>
 
@@ -628,48 +731,51 @@ export default function TransactionDetailScreen() {
           <Text className="text-xs text-gray-600 font-mono">{transaction.id}</Text>
         </View>
 
-        {/* Action Buttons */}
-        {isEditing && (
-          <View className="gap-3 mb-6">
-            <Pressable
-              onPress={handleSave}
-              disabled={saving}
-              className="bg-primary rounded-2xl py-4 items-center active:opacity-70 disabled:opacity-50"
-            >
-              {saving ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text className="text-white font-semibold">Save Changes</Text>
-              )}
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                setIsEditing(false);
-                setEditedTitle(transaction.title);
-                setEditedAmount((transaction.amount / 100).toString());
-                setEditedExcludeFromAnalytics(transaction.excludeFromAnalytics || false);
-              }}
-              className="border border-gray-300 rounded-2xl py-4 items-center active:opacity-70"
-            >
-              <Text className="text-dark-100 font-semibold">Cancel</Text>
-            </Pressable>
-          </View>
+        {/* Delete Button (only visible when not editing) */}
+        {!isEditing && (
+          <Pressable
+            onPress={handleDelete}
+            disabled={saving}
+            className="bg-red-500 rounded-2xl py-4 items-center active:opacity-70 disabled:opacity-50"
+          >
+            {saving ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-white font-semibold">Delete Transaction</Text>
+            )}
+          </Pressable>
         )}
-
-        {/* Delete Button */}
-        <Pressable
-          onPress={handleDelete}
-          disabled={saving}
-          className="bg-red-500 rounded-2xl py-4 items-center active:opacity-70 disabled:opacity-50"
-        >
-          {saving ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text className="text-white font-semibold">Delete Transaction</Text>
-          )}
-        </Pressable>
       </ScrollView>
+
+      {/* Fixed Bottom Buttons (Edit Mode) */}
+      {isEditing && (
+        <View className="absolute bottom-0 left-0 right-0 px-5 py-4 bg-white border-t border-gray-200 gap-3">
+          <Pressable
+            onPress={handleSave}
+            disabled={saving}
+            className="bg-primary rounded-2xl py-4 items-center active:opacity-70 disabled:opacity-50"
+          >
+            {saving ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-white font-semibold">Save Changes</Text>
+            )}
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              setIsEditing(false);
+              setEditedTitle(transaction.title);
+              setEditedDisplayName(transaction.displayName || transaction.title);
+              setEditedAmount((transaction.amount / 100).toString());
+              setEditedExcludeFromAnalytics(transaction.excludeFromAnalytics || false);
+            }}
+            className="border border-gray-300 rounded-2xl py-4 items-center active:opacity-70"
+          >
+            <Text className="text-dark-100 font-semibold">Cancel</Text>
+          </Pressable>
+        </View>
+      )}
 
       {/* Category Dropdown Modal */}
       <Modal

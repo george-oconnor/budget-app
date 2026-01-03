@@ -13,7 +13,7 @@ export default function SignupScreen() {
 
   const handleSignup = async () => {
     try {
-      await signup(email, password, `${firstName} ${lastName}`);
+      await signup(email, password, firstName, lastName);
       router.replace("/");
     } catch (err) {
       // Error is handled by the store

@@ -144,6 +144,9 @@ export const useHomeStore = create<HomeState>((set) => ({
         currency: (t as any).currency,
         excludeFromAnalytics: (t as any).excludeFromAnalytics,
         source: (t as any).source,
+        displayName: (t as any).displayName,
+        account: (t as any).account,
+        matchedTransferId: (t as any).matchedTransferId,
       }));
 
       // Add queued transactions to the list (exclude completed)
@@ -158,6 +161,9 @@ export const useHomeStore = create<HomeState>((set) => ({
         currency: t.currency,
         excludeFromAnalytics: t.excludeFromAnalytics,
         source: t.source,
+        displayName: t.displayName,
+        account: t.account,
+        matchedTransferId: t.matchedTransferId,
       }));
 
       // Filter out queued transactions that already exist in the database

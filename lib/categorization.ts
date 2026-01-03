@@ -351,6 +351,52 @@ export async function categorizeTransaction(
 }
 
 /**
+ * Batch categorize multiple transactions efficiently
+ * Fetches categories and learned mappings once, then categorizes all transactions
+ */
+export async function batchCategorizeTransactions(
+  transactions: Array<{ title: string; subtitle: string; kind: 'income' | 'expense' }>
+): Promise<string[]> {
+  // Fetch categories and learned mappings once for all transactions
+  const [categories, learnedMappings] = await Promise.all([
+    getCategories(),
+    getLearnedMappings()
+  ]);
+
+  // Helper to get category ID by slug from the cached categories
+  const getCategoryIdFromCache = (slug: string): string => {
+    const category = categories.find(c => c.slug === slug || c.name.toLowerCase() === slug);
+    if (category) return category.$id;
+    
+    // Fallback to general
+    const general = categories.find(c => c.slug === 'general' || c.name.toLowerCase() === 'general');
+    return general ? general.$id : '';
+  };
+
+  // Categorize all transactions using the cached data
+  return transactions.map(tx => {
+    const isExpense = tx.kind === 'expense';
+    
+    // 1. Check learned merchant mappings
+    const merchantKey = getMerchantKey(tx.title);
+    if (learnedMappings[merchantKey]) {
+      return learnedMappings[merchantKey];
+    }
+
+    // 2. Try keyword matching
+    const combinedText = `${tx.title} ${tx.subtitle}`;
+    const keywordMatch = matchKeywordRules(combinedText, isExpense);
+    
+    if (keywordMatch) {
+      return getCategoryIdFromCache(keywordMatch);
+    }
+
+    // 3. Fall back to General
+    return getCategoryIdFromCache('general');
+  });
+}
+
+/**
  * Get or create the "uncategorized" category
  * This ensures we always have a fallback category
  * Returns the Appwrite database ID for the uncategorized category

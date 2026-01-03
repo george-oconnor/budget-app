@@ -17,6 +17,9 @@ export type Transaction = {
   excludeFromAnalytics?: boolean;
   isAnalyticsProtected?: boolean; // When true, excludeFromAnalytics cannot be toggled by user
   source?: "revolut_import" | "aib_import" | "manual" | "other_import"; // Where the transaction came from
+  displayName?: string; // How the transaction appears to the user; defaults to title for deduplication
+  account?: string; // Which account this transaction relates to (e.g., "Current Account", "Savings")
+  matchedTransferId?: string; // Linked transaction for internal transfers
 };
 
 export type Summary = {
@@ -52,7 +55,7 @@ export type SessionState = {
   error: string | null;
   checkSession: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, name: string) => Promise<void>;
+  signup: (email: string, password: string, firstName: string, lastName: string) => Promise<void>;
   logout: () => Promise<void>;
   setSession: (payload: { user: SessionUser; token: string }) => void;
   setStatus: (status: SessionStatus) => void;

@@ -42,7 +42,7 @@ export default function AllTransactionsScreen() {
 
   // Apply filter from URL params on mount
   useEffect(() => {
-    if (filter && (filter === "income" || filter === "expense" || filter === "all")) {
+    if (filter && (filter === "income" || filter === "expense" || filter === "all" || filter === "hidden")) {
       setSelectedFilter(filter);
     }
   }, [filter]);
@@ -85,7 +85,12 @@ export default function AllTransactionsScreen() {
           categoryId: t.categoryId,
           kind: t.kind,
           date: t.date,
+          currency: t.currency,
           source: (t as any).source,
+          displayName: (t as any).displayName,
+          excludeFromAnalytics: (t as any).excludeFromAnalytics,
+          isAnalyticsProtected: (t as any).isAnalyticsProtected,
+          matchedTransferId: (t as any).matchedTransferId,
         };
       });
 
@@ -100,7 +105,12 @@ export default function AllTransactionsScreen() {
           categoryId: t.categoryId,
           kind: t.kind,
           date: t.date,
+          currency: t.currency,
           source: t.source,
+          displayName: t.displayName,
+          excludeFromAnalytics: t.excludeFromAnalytics,
+          isAnalyticsProtected: t.isAnalyticsProtected,
+          matchedTransferId: t.matchedTransferId,
         }));
 
         // Combine and sort by date (most recent first)
@@ -145,9 +155,21 @@ export default function AllTransactionsScreen() {
     setRefreshing(false);
   }, [user?.id]);
 
+  // Helper to check if a transaction is automatically flagged as a transfer
+  const isAutoFlaggedTransfer = (t: Transaction) => {
+    return !!(t.matchedTransferId || t.isAnalyticsProtected);
+  };
+
   const filteredTransactions = useMemo(() => {
     return transactions.filter((t) => {
-      if (selectedFilter === "all") return true;
+      if (selectedFilter === "all") {
+        // Exclude auto-flagged transfers from All view
+        return !isAutoFlaggedTransfer(t);
+      }
+      if (selectedFilter === "hidden") {
+        // Show only auto-flagged transfers
+        return isAutoFlaggedTransfer(t);
+      }
       if (selectedFilter === "income" || selectedFilter === "expense") {
         return t.kind === selectedFilter;
       }
@@ -375,6 +397,22 @@ export default function AllTransactionsScreen() {
                     </Pressable>
                   );
                 })}
+
+              {/* Hidden */}
+              <Pressable
+                onPress={() => setSelectedFilter("hidden")}
+                className={`px-4 py-2 rounded-full ${
+                  selectedFilter === "hidden" ? "bg-gray-700" : "bg-gray-100"
+                }`}
+              >
+                <Text
+                  className={`text-sm font-semibold ${
+                    selectedFilter === "hidden" ? "text-white" : "text-gray-700"
+                  }`}
+                >
+                  Hidden
+                </Text>
+              </Pressable>
             </View>
           </ScrollView>
         </View>

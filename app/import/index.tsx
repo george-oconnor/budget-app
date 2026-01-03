@@ -32,7 +32,6 @@ const IMPORT_OPTIONS = [
     icon: "plus-circle",
     description: "Add transactions manually",
     color: "#F59E0B",
-    comingSoon: true,
   },
 ];
 
@@ -49,7 +48,7 @@ export default function ImportScreen() {
         console.log("CSV import coming soon");
         break;
       case "manual":
-        console.log("Manual entry coming soon");
+        router.push("/add-transaction");
         break;
       default:
         break;

@@ -7,15 +7,13 @@ export default function QuickActions({ actions }: { actions: QuickAction[] }) {
   const handleActionPress = (actionId: string) => {
     switch (actionId) {
       case "add":
-        // TODO: Navigate to add transaction screen
-        console.log("Add transaction");
+        router.push("/add-transaction");
         break;
       case "import":
         router.push("/import");
         break;
       case "analytics":
-        // TODO: Navigate to analytics/stats screen
-        console.log("View analytics");
+        router.push("/spend-analytics");
         break;
       case "balances":
         router.push("/balances");
