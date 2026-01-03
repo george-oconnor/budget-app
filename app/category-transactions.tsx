@@ -63,7 +63,7 @@ type GroupedTransaction = {
 };
 
 export default function CategoryTransactionsScreen() {
-  const { categoryId } = useLocalSearchParams<{ categoryId?: string }>();
+  const { categoryId, type } = useLocalSearchParams<{ categoryId?: string; type?: string }>();
   const { transactions, categories, summary, cycleType, cycleDay } = useHomeStore();
   const { user } = useSessionStore();
   const currency = summary?.currency ?? "USD";
@@ -73,30 +73,36 @@ export default function CategoryTransactionsScreen() {
     [categoryId, categories]
   );
 
-  // Get transactions for this category in this budget cycle
+  // Get transactions for this category or type in this budget cycle
   const filteredTransactions = useMemo(() => {
-    if (!categoryId) return [];
+    if (!categoryId && !type) return [];
 
     const cycleStart = getCycleStartDate(cycleType, cycleDay);
     const cycleEnd = getCycleEndDate();
 
     return transactions.filter((t) => {
-      // Match category (handle uncategorized)
-      const categoryMatch = t.categoryId === categoryId;
+      // Filter by category if provided
+      if (categoryId) {
+        const categoryMatch = t.categoryId === categoryId;
+        if (!categoryMatch) return false;
+      }
 
-      if (!categoryMatch) return false;
+      // Filter by type (income/expense) if provided
+      if (type) {
+        if (t.kind !== type) return false;
+      }
 
       // Exclude transactions flagged to be excluded from analytics
       if (t.excludeFromAnalytics) return false;
 
-      // Only include expenses on this page
-      if (t.kind !== "expense") return false;
+      // If filtering by category only, only include expenses
+      if (categoryId && !type && t.kind !== "expense") return false;
 
       // Match date range (in current cycle)
       const txDate = new Date(t.date);
       return txDate >= cycleStart && txDate <= cycleEnd;
     });
-  }, [categoryId, transactions, cycleType, cycleDay]);
+  }, [categoryId, type, transactions, cycleType, cycleDay]);
 
   // Group transactions by date
   const groupedTransactions: GroupedTransaction[] = useMemo(() => {
@@ -142,13 +148,16 @@ export default function CategoryTransactionsScreen() {
     return result;
   }, [filteredTransactions]);
 
-  const totalSpent = useMemo(
+  const totalAmount = useMemo(
     () =>
       filteredTransactions
-        .filter((t) => t.kind === "expense" && !t.excludeFromAnalytics)
+        .filter((t) => !t.excludeFromAnalytics)
         .reduce((sum, t) => sum + Math.abs(t.amount), 0),
     [filteredTransactions]
   );
+
+  const isIncome = type === "income";
+  const isExpense = type === "expense" || categoryId;
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -162,31 +171,35 @@ export default function CategoryTransactionsScreen() {
             <Feather name="chevron-left" size={20} color="#7C3AED" />
             <Text className="text-primary text-base font-semibold">Back</Text>
           </Pressable>
-          <Text className="text-xs text-gray-500">Category</Text>
+          <Text className="text-xs text-gray-500">{type ? "Type" : "Category"}</Text>
         </View>
         <View className="mt-1 items-end">
-          <Text className="text-2xl font-bold text-dark-100">{category?.name || "Uncategorized"}</Text>
+          <Text className="text-2xl font-bold text-dark-100">
+            {type ? (type === "income" ? "Income" : "Expenses") : (category?.name || "Uncategorized")}
+          </Text>
         </View>
       </View>
 
-      {/* Category Info */}
+      {/* Category/Type Info */}
         <View className="flex-row items-center gap-3 bg-gray-50 rounded-2xl p-4">
           <View
             className="w-12 h-12 rounded-full items-center justify-center"
             style={{
-              backgroundColor: category?.color || "#9CA3AF",
+              backgroundColor: type ? (isIncome ? "#10B981" : "#EF4444") : (category?.color || "#9CA3AF"),
             }}
           >
             <Feather
-              name={normalizeFeatherIconName(category?.icon as any, category?.name) as any}
+              name={type ? (isIncome ? "arrow-down-left" : "arrow-up-right") : (normalizeFeatherIconName(category?.icon as any, category?.name) as any)}
               size={20}
               color="white"
             />
           </View>
           <View className="flex-1">
-            <Text className="text-gray-500 text-sm">Total spent this cycle</Text>
-            <Text className="text-xl font-bold text-red-500">
-              {formatCurrency(totalSpent / 100, currency)}
+            <Text className="text-gray-500 text-sm">
+              {isIncome ? "Total earned this cycle" : "Total spent this cycle"}
+            </Text>
+            <Text className={`text-xl font-bold ${isIncome ? "text-green-500" : "text-red-500"}`}>
+              {formatCurrency(totalAmount / 100, currency)}
             </Text>
           </View>
         </View>
@@ -196,7 +209,7 @@ export default function CategoryTransactionsScreen() {
         <View className="flex-1 items-center justify-center">
           <Feather name="inbox" size={48} color="#D1D5DB" />
           <Text className="text-gray-400 text-base mt-4">
-            No transactions in this category this cycle
+            {type ? `No ${type} transactions this cycle` : "No transactions in this category this cycle"}
           </Text>
         </View>
       ) : (

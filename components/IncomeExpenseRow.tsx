@@ -19,7 +19,7 @@ export default function IncomeExpenseRow({
   return (
     <View className="flex-row gap-4 mt-4">
       <Pressable
-        onPress={() => router.push("/transactions?filter=income")}
+        onPress={() => router.push("/category-transactions?type=income")}
         onPressIn={() => setIncomePressed(true)}
         onPressOut={() => setIncomePressed(false)}
         className="flex-1"
@@ -35,7 +35,7 @@ export default function IncomeExpenseRow({
         </View>
       </Pressable>
       <Pressable
-        onPress={() => router.push("/transactions?filter=expense")}
+        onPress={() => router.push("/category-transactions?type=expense")}
         onPressIn={() => setExpensePressed(true)}
         onPressOut={() => setExpensePressed(false)}
         className="flex-1"
