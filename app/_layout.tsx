@@ -77,9 +77,27 @@ export default function RootLayout() {
         });
         
         try {
-          // Read the file content
-          console.log('CSV import: Attempting to read file...');
-          const fileContent = await FileSystem.readAsStringAsync(event.url);
+          // On iOS, reading a file shared via "Open in" can fail if not copied inside the app sandbox.
+          // Copy the file to a cache dir first, then read.
+          const cacheDir = FileSystem.cacheDirectory + 'imports';
+          try {
+            await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
+          } catch (e) {
+            // ignore EEXIST
+          }
+
+          const tempPath = `${cacheDir}/${Date.now()}.csv`;
+          console.log('CSV import: Copying to temp path:', tempPath);
+          await FileSystem.copyAsync({ from: event.url, to: tempPath });
+          captureMessage('CSV import: File copied to cache', {
+            level: 'info',
+            contexts: { csv_import: { fileUrl: event.url, tempPath } },
+            tags: { feature: 'csv_import', event_type: 'file_copied' }
+          });
+
+          // Read the file content from the cache location
+          console.log('CSV import: Attempting to read file from cache...');
+          const fileContent = await FileSystem.readAsStringAsync(tempPath);
           console.log('CSV import: File read successful, length:', fileContent?.length);
           
           if (!fileContent || fileContent.trim().length === 0) {
@@ -88,6 +106,7 @@ export default function RootLayout() {
               contexts: {
                 csv_import: {
                   fileUrl: event.url,
+                  tempPath,
                   fileSize: fileContent?.length || 0
                 }
               },
@@ -106,6 +125,7 @@ export default function RootLayout() {
             contexts: {
               csv_import: {
                 fileUrl: event.url,
+                tempPath,
                 fileSize: fileContent.length,
                 fileSizeKB: Math.round(fileContent.length / 1024)
               }
@@ -178,10 +198,9 @@ export default function RootLayout() {
             }
           });
           
-          Alert.alert(
-            'Error',
-            'Failed to read the CSV file. Please try again.'
-          );
+          const code = (error as any)?.code || (error as any)?.name || 'unknown';
+          const message = (error as any)?.message || String(error);
+          Alert.alert('Error', `Failed to read the CSV file.\nCode: ${code}\n${message}`);
         }
       }
     };
